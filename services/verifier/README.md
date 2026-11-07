@@ -144,3 +144,21 @@ The public test case is repository `harshitapunia/ProofOfWork` (ID `1447380055`)
 `npm test` remains deterministic and does not select this script. Live authentication/API/assertion errors fail the opt-in script with sanitized output, rather than skipping. This validates the GitHub adapter only: it does not establish exclusive code authorship or test OAuth enrollment, other users/private repositories/fork PRs, live Solana state, signing, transactions or end-to-end attestation. Rate-limit/network-failure and corrupted-response tests remain mocked.
 
 The authenticated live run passed for the public case above, including all three specific negative rejections. The retrieved blob SHA was `6f095dec6eec57214a8a40a026a01cf7317d4b8b`. No retrieved code was executed or GitHub resources modified.
+
+
+## Opt-in live DevnetReader readiness test
+
+```sh
+npm run test:devnet:live                  # SKIPPED, no RPC calls
+LIVE_DEVNET=1 npm run test:devnet:live    # Read-only readiness and negative tests
+```
+
+This separate script is not selected by deterministic `npm test`. It allows only read-only RPC methods at `https://api.devnet.solana.com`, verifies the Devnet genesis hash, inspects the configured program's existence/executable/loader ownership, and counts its program-owned accounts. Loader ownership alone does not audit deployed bytecode or upgrade authority. RPC errors fail rather than masquerading as absent state.
+
+Missing configuration and malformed milestone addresses exercise the existing reader's local fail-closed guards without RPC. A synthetic, explicitly labeled PDA probe is first confirmed absent with live RPC, then passed to `DevnetReader` to verify `missing_onchain_state`. The program ID is used only as a public negative-test verifier sentinel, not as a designated verifier. No keypair or blockchain fixture is created. If the probe exists, that negative case is explicitly skipped.
+
+For a future positive case, supply both `LIVE_MILESTONE_ADDRESS` and `VERIFIER_PUBLIC_KEY` as local public environment settings with `LIVE_DEVNET=1`. Obtain these real values from Harshita or Palak; there are no fallback fixture addresses or verifier keys. The reader validates the supplied accounts; the script independently compares returned public bindings, requirement/evidence digests and the snapshot against fresh account bytes. Concurrent state changes can fail the snapshot comparison and require a fresh run. Partial or invalid configuration and invalid supplied fixtures fail. This does not independently prove the off-chain commitment preimages.
+
+`PASS` means an assertion actually ran successfully; `BLOCKED` identifies missing deployment/fixture infrastructure; `SKIPPED` identifies execution not performed. When no positive fixture is configured, the readiness script can exit successfully with blockers; that is not a positive live account-validation pass. Program-owned inventory alone does not establish a valid Submitted milestone. There is no deployment, signing, transaction, airdrop, mint creation, wallet access, or Solana CLI configuration change.
+
+The initial opt-in readiness run passed Devnet connectivity/genesis verification, local configuration/address guards, and the live missing-account rejection. The program account was absent and program-owned inventory was zero. Positive account validation was explicitly BLOCKED/SKIPPED, not passed.
