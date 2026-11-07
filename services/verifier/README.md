@@ -55,7 +55,7 @@ Successful responses contain the milestone and submission addresses, verifier pu
 
 Install and configure a compatible Docker Engine separately. There is no host-execution fallback. An operator must audit and provision a trusted Linux image containing Node, pin its actual digest, and set the same reference used by the manifest. Image pulling is disabled during verification.
 
-Every test case runs in a fresh container with no network, a non-root user, read-only root and source mount, all capabilities dropped, privilege escalation disabled, CPU/memory/swap/process/file-descriptor limits, bounded combined stdout/stderr, and an execution timeout. The Docker socket, service credentials, GitHub token, evidence nonce and Solana keys are never mounted or passed into the container. The host compares captured output against trusted expected values. Container logs are disabled. Containers are created stopped and started only after Docker returns a valid container ID. The runner inspects the actual exited state and exit code before accepting results, then force-removes that exact container ID in a finally block, including after timeout or excess output. Cleanup failure rejects the verification. If creation times out, no start request is issued and cleanup targets the generated name. A late daemon-side creation can leave a stopped container after that cleanup attempt. Containers carry the label `proofwork.verifier=true` so operators can identify such leftovers. No claim of real cleanup behavior is made until runtime testing completes.
+Every test case runs in a fresh container with no network, a non-root user, read-only root and source mount, all capabilities dropped, privilege escalation disabled, CPU/memory/swap/process/file-descriptor limits, bounded combined stdout/stderr, and an execution timeout. The Docker socket, service credentials, GitHub token, evidence nonce and Solana keys are never mounted or passed into the container. The host compares captured output against trusted expected values. Container logs are disabled. Containers are created stopped and started only after Docker returns a valid container ID. The runner inspects the actual exited state and exit code before accepting results, then force-removes that exact container ID in a finally block, including after timeout or excess output. Cleanup failure rejects the verification. If creation times out, no start request is issued and cleanup targets the generated name. A late daemon-side creation can leave a stopped container after that cleanup attempt. Containers carry the label `proofwork.verifier=true` so operators can identify such leftovers. Real benign-fixture and timeout cleanup has been observed on Docker Desktop; this does not establish cleanup reliability for every daemon failure or late creation race.
 
 The worker environment must be dedicated to untrusted work. Docker containment is an operational trust boundary, not a proof that code is harmless. A passing finite test suite establishes only the agreed acceptance checks. Expected output is evaluated by the host, while submitted code can intentionally target those tests.
 
@@ -89,7 +89,7 @@ Requests are serialized per milestone within one service process and capped at f
 
 `npm test` runs deterministic commitment vectors, manifest validation, GitHub/RPC mocks, pipeline integration, runner command and failure tests, and local HTTP tests. It uses no real credentials or on-chain accounts. `npm run check` performs strict TypeScript checks including unused code. No separate lint tool is configured.
 
-`npm run test:sandbox` runs the benign passing and failing fixtures only inside the configured Docker runner. Without a trusted image it explicitly reports a skip. The current development environment has neither Docker nor Podman available, so actual container execution and live GitHub/RPC integration remain unverified. Mocked passing outcomes are test doubles only.
+`npm run test:sandbox` runs the benign passing and failing fixtures only inside the configured Docker runner. Without a trusted image it explicitly reports a skip. Real benign-fixture execution has been validated using Docker Desktop with Ubuntu WSL2; live GitHub/RPC integration remains unverified. Mocked passing outcomes are test doubles only.
 
 The service does not implement OAuth enrollment, deployment, mint creation, stipends, signing or on-chain transactions. The program's existing on-chain authorization and replay checks remain authoritative. This is a fictional Devnet DEMO-token prototype.
 
@@ -98,7 +98,7 @@ Sources used for the integration are the [GitHub authenticated-user API](https:/
 
 ## Docker Desktop prerequisite and runtime validation
 
-The sandbox-runtime review found no Docker CLI in Ubuntu, no Docker Desktop executable in its standard Windows installation location, and no running Docker backend or Docker Windows service. No system software was installed during this task.
+The initial sandbox-runtime review found Docker unavailable. Docker Desktop 4.98.0 has since been installed separately with Ubuntu 24.04 WSL2 integration; Docker CLI and daemon 29.9.2 are reachable from Ubuntu.
 
 The minimal setup is Docker Desktop for Windows with the WSL 2 engine, Linux containers, and Ubuntu enabled under Settings → Resources → WSL Integration. Restart the Ubuntu terminal and verify both `docker --version` and `docker info` succeed. Follow the [official Docker WSL instructions](https://docs.docker.com/desktop/features/wsl/).
 
@@ -115,4 +115,14 @@ docker ps -a --filter label=proofwork.verifier=true
 
 Confirm the image is Linux, matches the host architecture and reports Node 24 before fixture execution. The mutable tag above is used only to resolve a genuine digest. Actual fixture testing uses the immutable reference. Review any labeled leftovers instead of deleting unrelated containers.
 
-Passing/failing fixture execution and real timeout, cleanup, excessive-output, non-root, network and read-only enforcement remain unexecuted while Docker is unavailable. Unit tests exercise these configuration and failure paths with mocked Docker commands. They establish fail-closed service behavior, not the operational isolation of a running container.
+### Real fixture validation
+
+The approved local image was `docker.io/library/node@sha256:c0a93797ee78814ae6d32fcca2561fdbbe423149c3f5389aad32d86e9fd85bd4` (Linux/amd64, Node 24.22.2). Configure `TRUSTED_RUNNER_IMAGE` locally; the test does not pull images.
+
+The shared mock helper retains its 1000 ms timeout. Only `test/sandbox.ts` sets its in-memory manifest to 5000 ms before validation. The original one-second start/attach deadline timed out benign fixtures, sometimes after correct output. In the controlled five-second run, container creation took 160–389 ms, start/attach 661–1261 ms, and cleanup 136–237 ms. Docker-reported container lifetimes were approximately 280–756 ms. Start/attach includes lifecycle and CLI overhead, not just JavaScript execution. These measurements do not separately isolate Node startup, JavaScript execution, or post-exit attachment delay.
+
+All four passing-fixture cases passed. All four failing-fixture cases returned incorrect output (`999`) with exit code zero and were rejected for output mismatch, without timeout or infrastructure failure. Exact-container cleanup succeeded, including after the earlier one-second timeout; no labeled containers or temporary source directories remained.
+
+No production runner policy, manifest bounds, hashing, or isolation settings changed. `timeoutMs` is part of the committed manifest bytes: changing it changes the requirements hash. Existing on-chain commitments must never be silently rewritten to use the local test setting.
+
+Actual container inspection confirmed the pinned image, non-root user, disabled networking, read-only root/source mount, dropped capabilities, no-new-privileges, and CPU/memory/swap/process/file-descriptor limits. This is configuration evidence; active network/write denial, resource exhaustion and output-overflow enforcement were not exercised by these benign fixtures. Unit tests cover failure paths with mocked Docker commands. Live GitHub/RPC, signing, hostile submissions and late daemon-creation races remain unverified. Passing finite fixtures does not prove containment against arbitrary malicious code.
