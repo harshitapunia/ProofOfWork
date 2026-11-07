@@ -1,14 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PublicKey, Transaction, TransactionInstruction, TransactionMessage, VersionedTransaction, SystemProgram } from "@solana/web3.js";
-import { AttestationAuthorizer, buildAttestMilestoneInstruction } from "../src/attestation.js";
+import { AttestationAuthorizer, AttestationError, buildAttestMilestoneInstruction } from "../src/attestation.js";
 import { DevnetAttestationReader } from "../src/attestation-chain.js";
 import { AttestationTransactionPolicy, TransactionPolicyError, type BlockhashObservation } from "../src/transaction-policy.js";
 import { VerifierService } from "../src/service.js";
 import { GitHub } from "../src/github.js";
+import { VerificationError } from "../src/errors.js";
 import { CASES } from "../src/manifest.js";
 import { fixture, githubFetch, TOKEN } from "./helpers.js";
 
+/** Creates isolated mocked chain, verification, clock and blockhash state; never generates signing keys. */
 async function setup() {
   const f = fixture(); let time = 0;
   const chain = new DevnetAttestationReader("https://api.devnet.solana.com", f.verifier.toBase58(), f.rpc);
@@ -32,8 +34,13 @@ async function setup() {
   return { ...f, chain, authorizer, config, observation, source, policy, ix, tx, ticket,
     clock: (value: number) => { time = value; }, duringObservation: (fn: () => void) => { onRead = fn; } };
 }
+/** Serializes an unsigned legacy proposal without requiring or validating synthetic test signatures. */
 const wire = (t: Transaction) => t.serialize({ requireAllSignatures: false, verifySignatures: false });
-const code = (value: string) => (e: unknown) => e instanceof TransactionPolicyError && e.code === value;
+/** Matches both the expected domain-error class and code so unrelated rejections cannot satisfy a test. */
+const code = (value: string, type: typeof TransactionPolicyError | typeof AttestationError | typeof VerificationError = TransactionPolicyError) =>
+  (e: unknown) => e instanceof type && e.code === value;
+/** Matches a plain Error from public-key parsing, excluding domain errors with coincidentally equal text. */
+const plainError = (message: string) => (e: unknown) => e instanceof Error && e.constructor === Error && e.message === message;
 
 test("offline policy accepts exact unsigned legacy attestation and consumes immutable message once", async () => {
   const f = await setup(), candidate = wire(f.tx());
@@ -42,33 +49,34 @@ test("offline policy accepts exact unsigned legacy attestation and consumes immu
   const message = await f.policy.consume(approval);
   assert.deepEqual(message, f.tx().serializeMessage());
   await assert.rejects(f.policy.consume(approval), code("invalid_transaction_authorization"));
-  await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())));
+  await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())), code("invalid_authorization", AttestationError));
 });
 for (const [label, offset] of [["discriminator", 0], ["student", 8], ["requirements hash", 40], ["evidence hash", 72]] as const) {
   test("rejects changed " + label, async () => {
     const f = await setup(); f.ix.data[offset] = f.ix.data[offset]! ^ 1;
-    await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())));
+    await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())), code("transaction_substitution"));
   });
 }
 test("rejects wrong program ID", async () => {
   const f = await setup(); f.ix.programId = new PublicKey(f.config.feePayer);
-  await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())));
+  await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())), code("transaction_substitution"));
 });
 for (const index of [0, 1, 2, 3]) {
   test("rejects substituted account at index " + index, async () => {
     const f = await setup(); f.ix.keys[index]!.pubkey = new PublicKey(f.request.student);
-    await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())));
+    await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())),
+      index === 2 ? code("missing_onchain_state", VerificationError) : code("transaction_substitution"));
   });
 }
 for (const [index, flag] of [[0, "isSigner"], [0, "isWritable"], [1, "isWritable"], [2, "isWritable"], [3, "isSigner"]] as const) {
   test("rejects altered " + flag + " for account " + index, async () => {
     const f = await setup(); f.ix.keys[index]![flag] = !f.ix.keys[index]![flag];
-    await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())));
+    await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())), code("transaction_substitution"));
   });
 }
 test("rejects reordered accounts", async () => {
   const f = await setup(); [f.ix.keys[1], f.ix.keys[3]] = [f.ix.keys[3]!, f.ix.keys[1]!];
-  await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())));
+  await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())), code("transaction_substitution"));
 });
 test("rejects extra token-transfer instruction", async () => {
   const f = await setup();
@@ -95,10 +103,17 @@ test("rejects fee payer alias with an attestation account", async () => {
   const f = await setup();
   const policy = new AttestationTransactionPolicy(f.authorizer, f.chain, f.source,
     { ...f.config, feePayer: f.internship.toBase58() }, () => 0);
-  const t = f.tx(); t.feePayer = f.internship;
-  await assert.rejects(policy.authorize(f.ticket, wire(t)));
+  // Keep the proposal's separate payer so account-permission promotion does not mask the config-alias gate.
+  const t = f.tx();
+  await assert.rejects(policy.authorize(f.ticket, wire(t)), code("fee_payer_alias"));
 });
-for (const issue of ["different", "invalid", "expiredHeight", "tooLittleLifetime", "oldObservation", "futureObservation", "cluster", "badHash"] as const) {
+const blockhashIssues = {
+  different: "unapproved_blockhash", invalid: "invalid_or_expired_blockhash",
+  expiredHeight: "invalid_or_expired_blockhash", tooLittleLifetime: "invalid_or_expired_blockhash",
+  oldObservation: "stale_authorization_or_blockhash", futureObservation: "stale_authorization_or_blockhash",
+  cluster: "invalid_cluster", badHash: "invalid_public_key",
+} as const;
+for (const issue of Object.keys(blockhashIssues) as (keyof typeof blockhashIssues)[]) {
   test("rejects blockhash issue: " + issue, async () => {
     const f = await setup(), candidate = wire(f.tx());
     if (issue === "different") f.observation.blockhash = new PublicKey(Buffer.alloc(32, 178)).toBase58();
@@ -109,12 +124,13 @@ for (const issue of ["different", "invalid", "expiredHeight", "tooLittleLifetime
     if (issue === "futureObservation") f.observation.observedAtMs = 1;
     if (issue === "cluster") f.observation.genesisHash = "wrong-genesis";
     if (issue === "badHash") f.observation.blockhash = "malformed";
-    await assert.rejects(f.policy.authorize(f.ticket, candidate));
+    await assert.rejects(f.policy.authorize(f.ticket, candidate),
+      issue === "badHash" ? plainError(blockhashIssues[issue]) : code(blockhashIssues[issue]));
   });
 }
 test("fake approval JSON, foreign handles and transaction bytes alone never authorize", async () => {
   const f = await setup();
-  await assert.rejects(f.policy.authorize({ approved: true }, wire(f.tx())));
+  await assert.rejects(f.policy.authorize({ approved: true }, wire(f.tx())), code("invalid_authorization", AttestationError));
   await assert.rejects(f.policy.consume({ approved: true, message: wire(f.tx()) }), code("invalid_transaction_authorization"));
   const approval = await f.policy.authorize(f.ticket, wire(f.tx()));
   await assert.rejects(f.policy.consume(JSON.parse(JSON.stringify(approval))), code("invalid_transaction_authorization"));
@@ -126,7 +142,7 @@ test("rejects changed chain state before authorization and before consumption", 
     const f = await setup();
     if (phase === "authorize") {
       f.m[136] = f.m[136]! ^ 1;
-      await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())));
+      await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())), code("stale_chain_state", AttestationError));
     } else {
       const approval = await f.policy.authorize(f.ticket, wire(f.tx()));
       f.m[136] = f.m[136]! ^ 1;
@@ -136,28 +152,39 @@ test("rejects changed chain state before authorization and before consumption", 
   }
 });
 test("expired approval and changed blockhash lease fail closed at handoff", async () => {
-  for (const issue of ["age", "lease", "heightRegression"]) {
+  const reasons = { age: "stale_authorization_or_blockhash", lease: "changed_blockhash_lease", heightRegression: "changed_blockhash_lease" } as const;
+  for (const issue of Object.keys(reasons) as (keyof typeof reasons)[]) {
     const f = await setup(), approval = await f.policy.authorize(f.ticket, wire(f.tx()));
     if (issue === "age") f.clock(5000);
     if (issue === "lease") f.observation.blockhash = new PublicKey(Buffer.alloc(32, 179)).toBase58();
     if (issue === "heightRegression") f.observation.currentBlockHeight = 99;
-    await assert.rejects(f.policy.consume(approval));
+    await assert.rejects(f.policy.consume(approval), code(reasons[issue]));
   }
 });
 test("concurrent consumption or evidence authorization yields at most one success", async () => {
   const f = await setup();
   const proposals = await Promise.allSettled([f.policy.authorize(f.ticket, wire(f.tx())), f.policy.authorize(f.ticket, wire(f.tx()))]);
   assert.equal(proposals.filter(p => p.status === "fulfilled").length, 1);
+  const rejectedProposal = proposals.find(p => p.status === "rejected");
+  assert.ok(rejectedProposal?.status === "rejected");
+  assert.ok(code("invalid_authorization", AttestationError)(rejectedProposal.reason));
   const success = proposals.find(p => p.status === "fulfilled"); assert.ok(success?.status === "fulfilled");
   const consumed = await Promise.allSettled([f.policy.consume(success.value), f.policy.consume(success.value)]);
   assert.equal(consumed.filter(p => p.status === "fulfilled").length, 1);
+  const rejectedConsumption = consumed.find(p => p.status === "rejected");
+  assert.ok(rejectedConsumption?.status === "rejected");
+  assert.ok(code("invalid_transaction_authorization")(rejectedConsumption.reason));
 });
 test("rejects versioned, malformed, trailing and pre-signed transactions", async () => {
   const f = await setup();
   const versioned = new VersionedTransaction(new TransactionMessage({ payerKey: new PublicKey(f.config.feePayer),
     recentBlockhash: f.observation.blockhash, instructions: [f.ix] }).compileToV0Message());
-  for (const value of [versioned.serialize(), Buffer.of(1, 2), Buffer.concat([wire(f.tx()), Buffer.of(1)]), Buffer.alloc(1233)])
-    await assert.rejects(f.policy.authorize(f.ticket, value));
+  const formats = [
+    [versioned.serialize(), "unsupported_transaction"], [Buffer.of(1, 2), "unsupported_transaction"],
+    [Buffer.concat([wire(f.tx()), Buffer.of(1)]), "noncanonical_transaction"], [Buffer.alloc(1233), "unsupported_transaction"],
+  ] as const;
+  for (const [value, reason] of formats)
+    await assert.rejects(f.policy.authorize(f.ticket, value), code(reason));
   const t = f.tx(); t.addSignature(f.verifier, Buffer.alloc(64, 1)); // Synthetic signature bytes, no signing keys.
   await assert.rejects(f.policy.authorize(f.ticket, wire(t)), code("signed_transaction_not_supported"));
 });
@@ -177,9 +204,9 @@ for (const phase of ["authorize", "consume"] as const) {
     const approval = phase === "consume" ? await f.policy.authorize(f.ticket, wire(f.tx())) : undefined;
     // Simulate another worker attesting while the trusted provider awaits RPC.
     f.duringObservation(() => { f.m[272] = 4; });
-    if (phase === "authorize") await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())));
+    if (phase === "authorize") await assert.rejects(f.policy.authorize(f.ticket, wire(f.tx())), code("invalid_onchain_state", VerificationError));
     else {
-      await assert.rejects(f.policy.consume(approval));
+      await assert.rejects(f.policy.consume(approval), code("invalid_onchain_state", VerificationError));
       await assert.rejects(f.policy.consume(approval), code("invalid_transaction_authorization"));
     }
   });

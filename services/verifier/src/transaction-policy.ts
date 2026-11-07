@@ -6,6 +6,7 @@ import { PROGRAM_ID, key } from "./commitments.js";
 export class TransactionPolicyError extends Error {
   constructor(public readonly code: string) { super(code); }
 }
+/** Throws the named policy error unless a required authorization invariant holds. */
 function requirePolicy(ok: unknown, code: string): asserts ok {
   if (!ok) throw new TransactionPolicyError(code);
 }
@@ -30,9 +31,11 @@ interface Record {
   state: AttestationState; wire: Buffer; message: Buffer;
   blockhash: string; lastValidBlockHeight: number; height: number; issued: number;
 }
+/** Compares every public binding and snapshot independent of object-property insertion order. */
 function sameState(a: AttestationState, b: AttestationState): boolean {
   return JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
 }
+/** Requires exact program, argument bytes, ordered accounts and per-account signer/writable permissions. */
 function sameInstruction(a: TransactionInstruction, b: TransactionInstruction): boolean {
   return a.programId.equals(b.programId) && a.data.equals(b.data) && a.keys.length === b.keys.length
     && a.keys.every((k, n) => { const x = b.keys[n]; return x && k.pubkey.equals(x.pubkey)
@@ -43,6 +46,7 @@ function sameInstruction(a: TransactionInstruction, b: TransactionInstruction): 
 export class AttestationTransactionPolicy {
   readonly #approvals = new WeakMap<object, Record>();
   readonly #config: Readonly<TransactionPolicyConfig>;
+  /** Copies trusted verifier/payer and bounded freshness settings; rejects implicit or aliased verifier payment. */
   constructor(private readonly authorizer: AttestationAuthorizer, private readonly chain: AttestationStateReader,
     private readonly blockhashes: TrustedBlockhashSource, config: TransactionPolicyConfig,
     private readonly now: () => number = () => performance.now()) {
@@ -52,10 +56,12 @@ export class AttestationTransactionPolicy {
     requirePolicy(Number.isSafeInteger(config.minRemainingBlockHeights) && config.minRemainingBlockHeights > 0, "invalid_height_policy");
     this.#config = Object.freeze({ ...config });
   }
+  /** Rejects expired, future-dated or nonfinite timestamps using the trusted monotonic clock. */
   private fresh(issued: number): void {
     const age = this.now() - issued;
     requirePolicy(Number.isFinite(age) && age >= 0 && age < this.#config.maxAgeMs, "stale_authorization_or_blockhash");
   }
+  /** Reads a trusted Devnet lease and checks cluster, hash shape, validity, age and remaining block heights. */
   private async observation(): Promise<BlockhashObservation> {
     const o = structuredClone(await this.blockhashes.read());
     requirePolicy(o.rpc === "https://api.devnet.solana.com"
@@ -67,6 +73,7 @@ export class AttestationTransactionPolicy {
     this.fresh(o.observedAtMs);
     return o;
   }
+  /** Accepts only size-bounded, canonical unsigned legacy wire bytes containing exactly one instruction. */
   private parse(wire: Buffer): Transaction {
     requirePolicy(wire.length > 0 && wire.length <= 1232, "unsupported_transaction");
     try {
@@ -80,6 +87,7 @@ export class AttestationTransactionPolicy {
       throw new TransactionPolicyError("unsupported_transaction");
     }
   }
+  /** Builds the sole allowed transaction with the authorized instruction and a distinct trusted fee payer. */
   private expected(ix: TransactionInstruction, o: BlockhashObservation): Transaction {
     requirePolicy(ix.programId.equals(PROGRAM_ID) && ix.data.length === 104
       && ix.keys[0]?.pubkey.toBase58() === this.#config.verifier, "incorrect_authorized_instruction");
@@ -87,7 +95,11 @@ export class AttestationTransactionPolicy {
     requirePolicy(!payer.equals(ix.programId) && ix.keys.every(k => !payer.equals(k.pubkey)), "fee_payer_alias");
     return new Transaction({ feePayer: payer, recentBlockhash: o.blockhash }).add(ix);
   }
-  /** Input bytes are an untrusted proposal; the original process-local evidence ticket is mandatory. */
+  /**
+   * Consumes a trusted evidence ticket and checks the proposal against exact authorized transaction bytes.
+   * Revalidates state after blockhash retrieval and returns an opaque, expiring process-local handle.
+   * @throws TransactionPolicyError for a policy violation; propagates evidence/chain validation failures.
+   */
   async authorize(evidenceTicket: unknown, proposal: Uint8Array): Promise<object> {
     requirePolicy(proposal instanceof Uint8Array && proposal.byteLength > 0 && proposal.byteLength <= 1232, "unsupported_transaction");
     const issued = this.now();
@@ -120,7 +132,11 @@ export class AttestationTransactionPolicy {
       lastValidBlockHeight: o.lastValidBlockHeight, height: o.currentBlockHeight, issued });
     return approval;
   }
-  /** Future signer must call this internally, then sign EXACTLY these bytes; no signing occurs here. */
+  /**
+   * Burns a transaction handle before awaits, then rechecks state, lease and expiry before copying its message.
+   * A future trusted signer must use exactly the returned bytes; this method never signs or broadcasts.
+   * @throws TransactionPolicyError for forged/reused/expired handles or changed transaction bindings.
+   */
   async consume(approval: unknown): Promise<Buffer> {
     requirePolicy(typeof approval === "object" && approval !== null, "invalid_transaction_authorization");
     const record = this.#approvals.get(approval);
