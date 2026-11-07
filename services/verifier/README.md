@@ -89,7 +89,7 @@ Requests are serialized per milestone within one service process and capped at f
 
 `npm test` runs deterministic commitment vectors, manifest validation, GitHub/RPC mocks, pipeline integration, runner command and failure tests, and local HTTP tests. It uses no real credentials or on-chain accounts. `npm run check` performs strict TypeScript checks including unused code. No separate lint tool is configured.
 
-`npm run test:sandbox` runs the benign passing and failing fixtures only inside the configured Docker runner. Without a trusted image it explicitly reports a skip. Real benign-fixture execution has been validated using Docker Desktop with Ubuntu WSL2; live GitHub/RPC integration remains unverified. Mocked passing outcomes are test doubles only.
+`npm run test:sandbox` runs the benign passing and failing fixtures only inside the configured Docker runner. Without a trusted image it explicitly reports a skip. Real benign-fixture execution has been validated using Docker Desktop with Ubuntu WSL2; live Solana RPC integration remains unverified. The separate opt-in GitHub adapter test is described below. Mocked passing outcomes are test doubles only.
 
 The service does not implement OAuth enrollment, deployment, mint creation, stipends, signing or on-chain transactions. The program's existing on-chain authorization and replay checks remain authoritative. This is a fictional Devnet DEMO-token prototype.
 
@@ -125,4 +125,22 @@ All four passing-fixture cases passed. All four failing-fixture cases returned i
 
 No production runner policy, manifest bounds, hashing, or isolation settings changed. `timeoutMs` is part of the committed manifest bytes: changing it changes the requirements hash. Existing on-chain commitments must never be silently rewritten to use the local test setting.
 
-Actual container inspection confirmed the pinned image, non-root user, disabled networking, read-only root/source mount, dropped capabilities, no-new-privileges, and CPU/memory/swap/process/file-descriptor limits. This is configuration evidence; active network/write denial, resource exhaustion and output-overflow enforcement were not exercised by these benign fixtures. Unit tests cover failure paths with mocked Docker commands. Live GitHub/RPC, signing, hostile submissions and late daemon-creation races remain unverified. Passing finite fixtures does not prove containment against arbitrary malicious code.
+Actual container inspection confirmed the pinned image, non-root user, disabled networking, read-only root/source mount, dropped capabilities, no-new-privileges, and CPU/memory/swap/process/file-descriptor limits. This is configuration evidence; active network/write denial, resource exhaustion and output-overflow enforcement were not exercised by these benign fixtures. Unit tests cover failure paths with mocked Docker commands. Live Solana RPC, signing, hostile submissions and late daemon-creation races remain unverified; live GitHub adapter validation is described below. Passing finite fixtures does not prove containment against arbitrary malicious code.
+
+
+## Opt-in live GitHub adapter validation
+
+Authenticate GitHub CLI as `harshitapunia`, then run from this directory:
+
+```sh
+npm run test:github:live                  # Explicit skip; no authentication or network calls
+LIVE_GITHUB=1 npm run test:github:live    # Authenticated read-only integration
+```
+
+The script captures `gh auth token --hostname github.com` in process memory without printing it, putting it in command arguments, or writing an environment file. Do not enable shell tracing or log credentials. No Docker container or retrieved source is executed. The script permits only GET requests to `https://api.github.com` with redirects refused.
+
+The public test case is repository `harshitapunia/ProofOfWork` (ID `1447380055`), contributor `harshitapunia` (ID `230834342`), PR #10 and original head `a0696fe0dd6f09e00ea853e19331162c3f96b3bf`, retrieving `services/verifier/fixtures/passing.mjs`. Live metadata must match before the existing `GitHub.verify` and `GitHub.source` methods are exercised. Source requests are pinned to that commit and the returned Git blob SHA is independently recomputed. Negative cases use mismatched contributor/repository IDs and the accessible merge commit instead of the PR head; each must produce its specific rejection reason.
+
+`npm test` remains deterministic and does not select this script. Live authentication/API/assertion errors fail the opt-in script with sanitized output, rather than skipping. This validates the GitHub adapter only: it does not establish exclusive code authorship or test OAuth enrollment, other users/private repositories/fork PRs, live Solana state, signing, transactions or end-to-end attestation. Rate-limit/network-failure and corrupted-response tests remain mocked.
+
+The authenticated live run passed for the public case above, including all three specific negative rejections. The retrieved blob SHA was `6f095dec6eec57214a8a40a026a01cf7317d4b8b`. No retrieved code was executed or GitHub resources modified.
