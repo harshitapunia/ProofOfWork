@@ -125,3 +125,39 @@ test("instructions compose into an unsigned wallet-adapter transaction without R
   assert.ok(tx.serialize({ requireAllSignatures:false,verifySignatures:false }).length>0);
   assert.ok(tx.signatures.every(s=>s.signature===null));
 });
+
+
+test("accepts independently constructed PublicKey-like objects without constructor identity", () => {
+  // Models a wallet-adapter key from a separate SDK copy with its own prototype.
+  class ForeignPublicKey {
+    constructor(private readonly address: string) {}
+    toBytes(): Uint8Array { return new PublicKey(this.address).toBytes(); }
+    toBase58(): string { return this.address; }
+  }
+  const sponsor = new ForeignPublicKey(first.sponsor), verifier = new ForeignPublicKey(first.verifier);
+  assert.equal(sponsor instanceof PublicKey, false);
+  const value = { ...input(), sponsor, verifier, rewardMint:new ForeignPublicKey(DEMO_MINT), tokenProgram:new ForeignPublicKey(TOKEN_PROGRAM_ID) };
+  for (const [build, expected] of [[createInternshipInstruction, first.createInternship],
+    [createMilestoneInstruction, first.createMilestone], [fundMilestoneInstruction, first.fundMilestone]] as const) {
+    const ix = build(value);
+    assert.equal(ix.data.toString("hex"), expected.dataHex);
+    assert.deepEqual(ix.keys.map(k=>({pubkey:k.pubkey.toBase58(),isSigner:k.isSigner,isWritable:k.isWritable})),expected.accounts);
+  }
+  assert.equal(deriveSponsorAta(sponsor).toBase58(),first.pdas.sponsorAta);
+});
+for (const [name, value] of Object.entries({
+  empty: {}, missingBytes: {toBase58:()=>first.sponsor}, missingBase58: {toBytes:()=>new Uint8Array(32)},
+  nonCallable: {toBytes:32,toBase58:first.sponsor},
+  shortBytes: {toBytes:()=>new Uint8Array(31),toBase58:()=>first.sponsor},
+  longBytes: {toBytes:()=>new Uint8Array(33),toBase58:()=>first.sponsor},
+  arrayBytes: {toBytes:()=>Array(32).fill(1),toBase58:()=>first.sponsor},
+  stringBytes: {toBytes:()=>first.sponsor,toBase58:()=>first.sponsor},
+  mismatched: {toBytes:()=>new PublicKey(first.sponsor).toBytes(),toBase58:()=>first.verifier},
+  nonCanonical: {toBytes:()=>new PublicKey(first.sponsor).toBytes(),toBase58:()=>" " + first.sponsor},
+  throwing: {toBytes:()=>{throw new Error("invalid key");},toBase58:()=>first.sponsor},
+  nonStringBase58: {toBytes:()=>new PublicKey(first.sponsor).toBytes(),toBase58:()=>123}
+})) {
+  test("rejects malformed PublicKey-like object: " + name, () => {
+    assert.throws(()=>createInternshipInstruction({...input(),sponsor:value as unknown as PublicKeyInput}),reason("invalid_public_key"));
+  });
+}
