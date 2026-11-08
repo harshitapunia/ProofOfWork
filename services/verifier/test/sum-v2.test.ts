@@ -230,3 +230,45 @@ for (const [name,stdout,stderr,cli,exit] of [
 ] as const) {
   test("v2 exact output contract: "+name,()=>assert.equal(sumV2OutputPass(stdout,stderr,cli,exit,.75),name==="correct"));
 }
+
+
+for (const mutation of ["sparse", "hole", "inherited", "non-array", "null", "undefined", "short", "long",
+  "reordered", "duplicate", "truthy", "false", "null-entry"] as const) {
+  test("v1 verification and independent attestation reject " + mutation + " outcomes", async () => {
+    const f=setup(manifest());
+    const dense=()=>CASES.map(c=>({id:c.id as string,passed:true}));
+    let outcomes:unknown=dense();
+    const entries=outcomes as ReturnType<typeof dense>;
+    if(mutation==="sparse") for(let i=0;i<entries.length;i++) delete entries[i];
+    if(mutation==="hole") delete entries[2];
+    if(mutation==="inherited") { const proto=Object.create(Array.prototype) as Record<number,unknown>;proto[2]=entries[2];Object.setPrototypeOf(entries,proto);delete entries[2]; }
+    if(mutation==="non-array") outcomes={...entries,length:4};
+    if(mutation==="null") outcomes=null;
+    if(mutation==="undefined") outcomes=undefined;
+    if(mutation==="short") entries.pop();
+    if(mutation==="long") entries.push({...entries[0]!});
+    if(mutation==="reordered") entries.reverse();
+    if(mutation==="duplicate") entries[2]={...entries[1]!};
+    if(mutation==="truthy") entries[2]!.passed="true" as unknown as boolean;
+    if(mutation==="false") entries[2]!.passed=false;
+    if(mutation==="null-entry") entries[2]=null as never;
+    const service=new VerifierService(new GitHub(githubFetch()),f.chain,{run:async()=>outcomes as ReturnType<typeof dense>});
+    const result=await service.verify(f.request,TOKEN);
+    assert.equal(result.approved,false);assert.equal(result.reason,"tests_failed");assert.equal(result.attestation,undefined);
+    await assert.rejects(new AttestationAuthorizer(service,f.chain,f.verifier.toBase58()).prepare(f.request,TOKEN),e=>e instanceof AttestationError&&e.code==="verification_failed");
+    // Exercise the authorizer independently of the corrected service gate.
+    const good=new VerifierService(new GitHub(githubFetch()),f.chain,{run:async()=>dense()});
+    const forged={verify:async(input:unknown,token:string)=>({...await good.verify(input,token),outcomes:outcomes as ReturnType<typeof dense>})};
+    await assert.rejects(new AttestationAuthorizer(forged,f.chain,f.verifier.toBase58()).prepare(f.request,TOKEN),e=>e instanceof AttestationError&&e.code==="verification_failed");
+  });
+}
+test("dense ordered v1 results still verify and authorize with the original commitment",async()=>{
+  const f=setup(manifest());
+  const service=new VerifierService(new GitHub(githubFetch()),f.chain,{run:async()=>CASES.map(c=>({id:c.id,passed:true}))});
+  const result=await service.verify(f.request,TOKEN);assert.equal(result.approved,true);
+  assert.deepEqual(result.outcomes,CASES.map(c=>({id:c.id,passed:true})));
+  const authorizer=new AttestationAuthorizer(service,f.chain,f.verifier.toBase58());
+  const ticket=await authorizer.prepare(f.request,TOKEN);
+  assert.equal((await authorizer.takeInstruction(ticket)).data.length,104);
+  assert.equal(TEST_DIGEST,"5b4904fdcfb094c62e7b1d8b674d8d2bf92ed3b7b5abaef9e811e8c003f76611");
+});

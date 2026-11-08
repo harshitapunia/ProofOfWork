@@ -53,7 +53,8 @@ function sameState(a: AttestationState, b: AttestationState): boolean {
 function validateResult(r: VerificationResult, s: AttestationState, request: Request, ids: readonly string[], isV2: boolean): void {
   check(r.approved === true && r.status === "passed" && r.reason === undefined, "verification_failed");
   check(isV2 ? sumV2OutcomesPass(r.outcomes)
-    : r.outcomes.length === ids.length && r.outcomes.every((o, n) => o.passed === true && o.id === ids[n]), "verification_failed");
+    : Array.isArray(r.outcomes) && r.outcomes.length === ids.length
+      && ids.every((id,index)=>Object.hasOwn(r.outcomes,index) && r.outcomes[index]?.id === id && r.outcomes[index]?.passed === true), "verification_failed");
   check(r.milestone === s.milestone && r.student === s.student && r.requirementsHash === s.requirementsHash
     && r.evidenceHash === s.evidenceHash && r.repositoryId === request.repositoryId
     && r.contributorId === request.contributorId && r.commit === request.commit, "result_binding_mismatch");

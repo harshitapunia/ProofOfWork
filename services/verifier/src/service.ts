@@ -57,7 +57,8 @@ export class VerifierService {
       if (manifest.task === "sum-v1") result.outcomes = outcomes;
       const ids = suiteCaseIds(manifest);
       requireValue(manifest.task === "sum-v2" ? sumV2OutcomesPass(outcomes)
-        : outcomes.length === ids.length && outcomes.every((outcome, index) => outcome.id === ids[index] && outcome.passed), "tests_failed");
+        : Array.isArray(outcomes) && outcomes.length === ids.length
+          && ids.every((id,index)=>Object.hasOwn(outcomes,index) && outcomes[index]?.id === id && outcomes[index]?.passed === true), "tests_failed");
       if (manifest.task === "sum-v2") result.outcomes = outcomes.map(o=>({id:o.id,passed:o.passed}));
       // No cached approval. Recheck mutable on-chain state after execution.
       const current = await this.chain.read(r.milestone);
