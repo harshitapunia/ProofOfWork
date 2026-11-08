@@ -1,6 +1,7 @@
 import { exactKeys, object, requireValue, VerificationError, type Failure } from "./errors.js";
 import { evidenceHash, equal, hex, key, u64 } from "./commitments.js";
-import { parseManifest, CASES } from "./manifest.js";
+import { parseManifest, suiteCaseIds } from "./manifest.js";
+import { sumV2OutcomesPass } from "./sum-v2.js";
 import { GitHub, type GitHubInput } from "./github.js";
 import type { StateReader } from "./chain.js";
 import type { Runner, Outcome } from "./runner.js";
@@ -53,8 +54,12 @@ export class VerifierService {
       result = { ...result, milestone: state.milestone, student: state.student, repositoryId: r.repositoryId,
         contributorId: r.contributorId, commit: r.commit, requirementsHash: state.requirementsHash, evidenceHash: state.evidenceHash };
       const outcomes = await this.runner.run(source, manifest);
-      result.outcomes = outcomes;
-      requireValue(outcomes.length === CASES.length && outcomes.every((outcome, index) => outcome.id === CASES[index]?.id && outcome.passed), "tests_failed");
+      if (manifest.task === "sum-v1") result.outcomes = outcomes;
+      const ids = suiteCaseIds(manifest);
+      requireValue(manifest.task === "sum-v2" ? sumV2OutcomesPass(outcomes)
+        : Array.isArray(outcomes) && outcomes.length === ids.length
+          && ids.every((id,index)=>Object.hasOwn(outcomes,index) && outcomes[index]?.id === id && outcomes[index]?.passed === true), "tests_failed");
+      if (manifest.task === "sum-v2") result.outcomes = outcomes.map(o=>({id:o.id,passed:o.passed}));
       // No cached approval. Recheck mutable on-chain state after execution.
       const current = await this.chain.read(r.milestone);
       requireValue(current.snapshot === state.snapshot, "invalid_onchain_state");

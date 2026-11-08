@@ -208,3 +208,16 @@ The transaction-policy security review added a final authoritative state reread 
 `new DevnetBlockhashSource()` from `src/devnet-blockhash.ts` implements `TrustedBlockhashSource` using only the official Devnet RPC, confirmed commitment and verified genesis. Share one instance with the transaction policy: it pins a hash/expiry lease and rechecks validity and nonregressing height/slot bounds on every read. An expired lease fails that read; a later read may acquire a new one, which invalidates old policy approvals. Observation time uses `performance.now()` from the start of the bounded read; any custom clock must match the policy clock. RPC failures return no observation. No signer, wallet or deployment is required.
 
 Run `npm run test:blockhash:live` for an explicit no-network skip, or `LIVE_DEVNET_BLOCKHASH=1 npm run test:blockhash:live` for the read-only live check. Normal `npm test` stays deterministic. This supplies RPC observations, not transaction confirmation or protection from a compromised RPC node; final policy freshness margins and signing decisions remain separately configured.
+
+### Versioned sum suites
+
+Existing `sum-v1` cases and `TEST_DIGEST` are unchanged. New milestones may commit
+`task` and `tests.suite` as `sum-v2` with `SUM_V2_DIGEST` from `src/sum-v2.ts`.
+That digest pins `SUM_V2_POLICY`: 10 edge cases plus 8 independent CSPRNG cases,
+quarter-unit inputs, a trusted integer-tick oracle, the exact harness, and explicit
+byte-exact output/exit/cleanup acceptance rules. Missing, sparse or malformed outcome sets fail closed.
+Each case uses a fresh restricted container (18 maximum; 128 values maximum).
+Random inputs and expected outputs stay internal; API outcomes contain only IDs and pass flags.
+Existing manifests are never upgraded automatically. Policy changes require a new suite version.
+The opt-in `test:sandbox` command also exercises harmless v2 fixtures when the trusted image is configured.
+Finite randomized testing reduces simple hardcoding; it does not prove general correctness or stop every adversarial implementation.

@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, writeFile, chmod, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CASES, IMAGE_PATTERN, type Manifest } from "./manifest.js";
+import { CASES, suiteCaseIds, IMAGE_PATTERN, type Manifest } from "./manifest.js";
+import { createSumV2Cases, SUM_V2_HARNESS, sumV2OutputPass, type RandomInt } from "./sum-v2.js";
 import { VerificationError } from "./errors.js";
 
 export interface Outcome { id: string; passed: boolean }
@@ -37,12 +38,15 @@ export function createArguments(name: string, directory: string, manifest: Manif
     "--cpus=" + r.cpus, "--memory=" + r.memoryMb + "m", "--memory-swap=" + r.memoryMb + "m",
     "--pids-limit=" + r.pids, "--ulimit=nofile=64:64", "--ipc=none", "--log-driver=none",
     "--mount", "type=bind,src=" + directory + ",dst=/work,readonly",
-    "--entrypoint=node", r.image, "--input-type=module", "-e", HARNESS, JSON.stringify(input)];
+    "--entrypoint=node", r.image, "--input-type=module", "-e", manifest.task === "sum-v2" ? SUM_V2_HARNESS : HARNESS, JSON.stringify(input)];
 }
 export class DockerRunner implements Runner {
-  constructor(private readonly trustedImage: string | undefined, private readonly command: Command = dockerCommand) {}
+  constructor(private readonly trustedImage: string | undefined, private readonly command: Command = dockerCommand,
+    private readonly random: RandomInt | undefined = undefined) {}
   async run(source: Buffer, manifest: Manifest): Promise<Outcome[]> {
     if (!this.trustedImage || !IMAGE_PATTERN.test(this.trustedImage) || this.trustedImage !== manifest.runner.image) throw new VerificationError("runner_unavailable");
+    suiteCaseIds(manifest);
+    const cases = manifest.task === "sum-v1" ? CASES : createSumV2Cases(this.random);
     let directory: string | undefined;
     try {
       const available = await this.command(["version", "--format", "{{.Server.Version}}"], 5_000, 4096);
@@ -52,7 +56,7 @@ export class DockerRunner implements Runner {
       await chmod(directory, 0o711);
       await writeFile(join(directory, "solution.mjs"), source, { mode: 0o444 });
       const outcomes: Outcome[] = [];
-      for (const test of CASES) {
+      for (const test of cases) {
         const name = "proofwork-" + randomUUID();
         let containerId: string | undefined;
         let passed = false;
@@ -81,8 +85,9 @@ export class DockerRunner implements Runner {
             throw new VerificationError("runner_failure");
           }
           // Docker CLI success alone does not establish the container exit status.
-          passed = result.code === 0 && exit.ExitCode === 0 && result.stderr === ""
-            && result.stdout === JSON.stringify(test.expected);
+          passed = manifest.task === "sum-v1"
+            ? result.code === 0 && exit.ExitCode === 0 && result.stderr === "" && result.stdout === JSON.stringify(test.expected)
+            : sumV2OutputPass(result.stdout, result.stderr, result.code, exit.ExitCode as number, test.expected);
         } finally {
           // Always remove the exact created container, even after CLI timeout.
           // A failed creation may leave a stopped container under its generated name.
