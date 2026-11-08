@@ -43,6 +43,12 @@ pub mod proof_of_work {
         )
     }
 
+    /// Deposits the sponsor's full reward into the dedicated vault, then transitions Created to Funded.
+    /// Rejects incorrect authority/accounts, expired terms, repeated funding or failed checked transfers.
+    pub fn fund_milestone(ctx: Context<FundMilestone>) -> Result<()> {
+        instructions::finance::fund_milestone::handle_fund_milestone(ctx)
+    }
+
     pub fn assign_student(ctx: Context<AssignStudent>, student: Pubkey) -> Result<()> {
         instructions::verification::assign_student::handle_assign_student(ctx, student)
     }
