@@ -1,7 +1,8 @@
 import { PublicKey, TransactionInstruction } from "@solana/web3.js";
 import { PROGRAM_ID, evidenceHash, hex, key, sha256, u64 } from "./commitments.js";
-import { parseManifest, CASES } from "./manifest.js";
+import { parseManifest, suiteCaseIds } from "./manifest.js";
 import { VerifierService, type Request, type VerificationResult } from "./service.js";
+import { sumV2OutcomesPass } from "./sum-v2.js";
 import { GitHub } from "./github.js";
 import { DockerRunner } from "./runner.js";
 import { DevnetAttestationReader, type AttestationState, type AttestationStateReader } from "./attestation-chain.js";
@@ -49,9 +50,10 @@ function sameState(a: AttestationState, b: AttestationState): boolean {
   return (Object.keys(a) as (keyof AttestationState)[]).every(k => a[k] === b[k])
     && Object.keys(a).length === Object.keys(b).length;
 }
-function validateResult(r: VerificationResult, s: AttestationState, request: Request): void {
+function validateResult(r: VerificationResult, s: AttestationState, request: Request, ids: readonly string[], isV2: boolean): void {
   check(r.approved === true && r.status === "passed" && r.reason === undefined, "verification_failed");
-  check(r.outcomes.length === CASES.length && r.outcomes.every((o, n) => o.passed === true && o.id === CASES[n]?.id), "verification_failed");
+  check(isV2 ? sumV2OutcomesPass(r.outcomes)
+    : r.outcomes.length === ids.length && r.outcomes.every((o, n) => o.passed === true && o.id === ids[n]), "verification_failed");
   check(r.milestone === s.milestone && r.student === s.student && r.requirementsHash === s.requirementsHash
     && r.evidenceHash === s.evidenceHash && r.repositoryId === request.repositoryId
     && r.contributorId === request.contributorId && r.commit === request.commit, "result_binding_mismatch");
@@ -86,12 +88,12 @@ export class AttestationAuthorizer {
       check(initial.milestone === milestone && initial.student === request.student, "request_binding_mismatch");
       const manifestBytes = Buffer.from(request.manifestBase64, "base64");
       check(manifestBytes.toString("base64") === request.manifestBase64, "invalid_request");
-      const { hash } = parseManifest(manifestBytes);
+      const { hash, manifest } = parseManifest(manifestBytes);
       check(hash.toString("hex") === initial.requirementsHash, "requirements_mismatch");
       check(evidenceHash({ ...request, requirementsHash: initial.requirementsHash }).toString("hex") === initial.evidenceHash, "evidence_mismatch");
       // Only the result of this trusted execution is examined; no method accepts a caller result.
       const result = await this.service.verify(structuredClone(request), githubToken);
-      validateResult(result, initial, request);
+      validateResult(result, initial, request, suiteCaseIds(manifest), manifest.task === "sum-v2");
       const current = structuredClone(await this.chain.read(milestone));
       validateState(current, this.verifier);
       check(sameState(initial, current), "stale_chain_state");
