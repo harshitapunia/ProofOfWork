@@ -9,6 +9,7 @@ import { fixture } from "./helpers.js";
 
 // Synthetic public transaction IDs only: 64 decoded bytes, with no signatures generated.
 const TX="1".repeat(63)+"2", OTHER_TX="1".repeat(63)+"3";
+/** Builds synthetic public metadata only, with no RPC access, operational keys or transaction signatures. */
 function binding(): RecoveryBindings {
   const f=fixture();
   return {cluster:"devnet",genesisHash:"EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",programId:PROGRAM_ID.toBase58(),
@@ -18,15 +19,21 @@ function binding(): RecoveryBindings {
     messageDigest:sha256(Buffer.from("synthetic unsigned message; never signed")).toString("hex"),
     blockhash:f.internship.toBase58(),lastValidBlockHeight:200};
 }
+/** Starts an isolated offline record for each test; no real authorization is prepared. */
 const create=()=>createRecoveryAttempt("attempt-1",binding());
+/** Matches precise recovery error codes so unrelated exceptions cannot satisfy rejection tests. */
 const code=(c:string)=>(e:unknown)=>e instanceof RecoveryError && e.code===c;
+/** Seals one deterministic trusted-source event and evaluates it against the supplied revision. */
 async function step(a: RecoveryAttempt,event: RecoveryEvent,eventId="event-"+(a.revision+1)):Promise<RecoveryAttempt> {
   const source=createOfflineRecoveryObserver(async()=>({attemptId:a.attemptId,expectedRevision:a.revision,bindings:a.bindings,eventId,event}));
   return transitionRecovery(a,await source.observe(a));
 }
+/** Advances metadata to a submission-started observation without signing or submitting anything. */
 async function submitted() {return step(await step(create(),{kind:"signing_started"}),{kind:"submission_started",transactionId:TX});}
+/** Supplies synthetic transaction evidence for finality and contradiction tests. */
 const status=(outcome:"success"|"failure",finality:"processed"|"confirmed"|"finalized"="confirmed",slot=100):RecoveryEvent=>
   ({kind:"transaction_status",transactionId:TX,outcome,finality,slot});
+/** Asserts classifications retain reservations and never grant retry or submission authority. */
 function denied(a: RecoveryAttempt) {
   const c=classifyRecovery(a);assert.equal(c.retryAuthorized,false);assert.equal(c.submissionAuthorized,false);
   assert.equal(c.reservation,"retained");assert.equal(c.observationsOnly,true);
@@ -165,10 +172,13 @@ test("records and injected evidence are copied, and classification has no networ
 /** Test-only atomic map; not a persistence implementation or production reservation manager. */
 class StoreDouble implements RecoveryStore {
   readonly records=new Map<string,RecoveryAttempt>();
+  /** Models unique insertion by operation key within this test process only. */
   async insertIfAbsent(a:RecoveryAttempt):Promise<boolean> {
     if(this.records.has(a.operationKey))return false;this.records.set(a.operationKey,a);return true;
   }
+  /** Returns the accepted immutable test head; does not simulate durable restart hydration. */
   async read(k:string) {return this.records.get(k);}
+  /** Models a revision/identity conflict check synchronously; proves no cross-process durability. */
   async compareAndSwap(previous:RecoveryAttempt,next:RecoveryAttempt):Promise<boolean> {
     if(this.records.get(previous.operationKey)!==previous || next.identity!==previous.identity || next.operationKey!==previous.operationKey || next.revision!==previous.revision+1)return false;
     this.records.set(previous.operationKey,next);return true;
@@ -263,4 +273,57 @@ test("pure historical evaluations never claim replay exclusion without an atomic
   denied(x);denied(y);const store=new StoreDouble();assert.equal(await store.insertIfAbsent(a),true);
   assert.equal(await store.compareAndSwap(a,x),true);assert.equal(await store.compareAndSwap(a,y),false);
   assert.equal(await store.read(a.operationKey),x);
+});
+
+
+for(const kind of ["function", "proxy", "ownKeys", "descriptor", "event-proxy"] as const) {
+  test("observer normalizes malformed "+kind+" observations to RecoveryError",async()=>{
+    const a=create();
+    const base={attemptId:a.attemptId,expectedRevision:0,bindings:a.bindings,eventId:"invalid",event:{kind:"rpc_timeout"} as RecoveryEvent};
+    let raw:unknown=base;
+    if(kind==="function") raw={...base,event:{kind:"rpc_timeout",payload:()=>0}};
+    if(kind==="proxy") raw=new Proxy(base,{});
+    if(kind==="ownKeys") raw=new Proxy(base,{ownKeys(){throw new Error("inspection failed");}});
+    if(kind==="descriptor") raw=new Proxy(base,{getOwnPropertyDescriptor(){throw new TypeError("descriptor failed");}});
+    if(kind==="event-proxy") raw={...base,event:new Proxy(base.event,{})};
+    const source=createOfflineRecoveryObserver(async()=>raw as typeof base);
+    await assert.rejects(source.observe(a),code("invalid_observation"));
+    assert.equal(a.revision,0);assert.equal(a.state,"authorization_prepared");denied(a);
+    assert.throws(()=>transitionRecovery(a,{} as RecoveryObservation),code("untrusted_observation"));
+  });
+}
+test("unexpected cloning exceptions normalize without exposing raw exception messages",async t=>{
+  const a=create(),raw={attemptId:a.attemptId,expectedRevision:0,bindings:a.bindings,eventId:"clone",event:{kind:"rpc_timeout"} as const};
+  const clone=globalThis.structuredClone;
+  t.mock.method(globalThis,"structuredClone",(value:unknown)=>{
+    if(value===raw)throw new RangeError("unexpected clone failure");
+    return clone(value);
+  });
+  await assert.rejects(createOfflineRecoveryObserver(async()=>raw).observe(a),e=>
+    e instanceof RecoveryError && e.code==="invalid_observation" && e.message==="invalid_observation");
+  denied(a);
+});
+test("trusted-source failures propagate unchanged rather than becoming malformed-observation errors",async()=>{
+  const a=create();
+  for(const failure of [new Error("source unavailable"),new RecoveryError("source_unavailable"),new DOMException("source clone error","DataCloneError")]) {
+    const observer=createOfflineRecoveryObserver(async()=>{throw failure;});
+    await assert.rejects(observer.observe(a),e=>e===failure);denied(a);
+  }
+});
+test("validation and inspection preserve legitimate RecoveryError instances and codes",async()=>{
+  const a=create(),base={attemptId:a.attemptId,expectedRevision:0,bindings:a.bindings,eventId:"event",event:{kind:"rpc_timeout"} as const};
+  const failure=new RecoveryError("inspection_unavailable");
+  const proxy=new Proxy(base,{ownKeys(){throw failure;}});
+  await assert.rejects(createOfflineRecoveryObserver(async()=>proxy).observe(a),e=>e===failure);
+  for(const [raw,expected] of [[{...base,expectedRevision:1},"observation_conflict"],
+    [{...base,eventId:"bad event"},"invalid_event_id"],
+    [{...base,bindings:{...base.bindings,genesisHash:"wrong"}},"invalid_cluster"],
+    [{...base,bindings:{...base.bindings,messageDigest:"cd".repeat(32)}},"changed_bindings"]] as const)
+    await assert.rejects(createOfflineRecoveryObserver(async()=>raw).observe(a),code(expected));
+});
+test("a clone-stage RecoveryError is not swallowed",async t=>{
+  const a=create(),raw={attemptId:a.attemptId,expectedRevision:0,bindings:a.bindings,eventId:"clone",event:{kind:"rpc_timeout"} as const};
+  const failure=new RecoveryError("clone_unavailable"),clone=globalThis.structuredClone;
+  t.mock.method(globalThis,"structuredClone",(value:unknown)=>{if(value===raw)throw failure;return clone(value);});
+  await assert.rejects(createOfflineRecoveryObserver(async()=>raw).observe(a),e=>e===failure);
 });

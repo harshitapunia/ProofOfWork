@@ -4,8 +4,10 @@ import { PROGRAM_ID, key, hex, sha256 } from "./commitments.js";
 
 const GENESIS = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 export class RecoveryError extends Error {
+  /** Keeps stable recovery error codes without retaining raw observation payloads. */
   constructor(public readonly code: string) { super(code); }
 }
+/** Rejects a failed invariant with the supplied RecoveryError code. */
 function check(value: unknown, code: string): asserts value { if (!value) throw new RecoveryError(code); }
 export interface RecoveryBindings {
   readonly cluster: "devnet"; readonly genesisHash: string; readonly programId: string;
@@ -43,6 +45,7 @@ export interface ObservationInput {
 export interface RecoveryObservation { readonly __recoveryObservation: unique symbol }
 const observations = new WeakMap<object, Readonly<ObservationInput>>();
 const attempts = new WeakSet<object>();
+/** Freezes and locally brands a record; does not register or release an operational reservation. */
 function sealAttempt(a: RecoveryAttempt): RecoveryAttempt { const result=Object.freeze(a);attempts.add(result);return result; }
 /** Accepts only enumerable own data properties, never accessors, symbols or array-shaped records. */
 function dataObject(value: unknown): boolean {
@@ -52,13 +55,16 @@ function dataObject(value: unknown): boolean {
       return typeof k==="string" && d?.enumerable===true && Object.hasOwn(d,"value");
     });
 }
+/** Requires exactly the named own data fields; inspection exceptions are handled by the caller. */
 function exactFields(value: unknown, fields: readonly string[]): boolean {
   return dataObject(value) && Reflect.ownKeys(value as object).length===fields.length
     && fields.every(k=>Object.hasOwn(value as object,k));
 }
 const bindingFields = ["cluster","genesisHash","programId","milestone","submission","student","verifier","feePayer",
   "requirementsHash","evidenceHash","messageDigest","blockhash","lastValidBlockHeight"] as const;
+/** Accepts only nonnegative safe integer revisions, slots and block heights without coercion. */
 function integer(n: unknown): boolean { return typeof n === "number" && Number.isSafeInteger(n) && n >= 0; }
+/** Requires bounded ASCII attempt/event identifiers; callers must supply non-secret IDs. */
 function identifier(s: unknown): boolean { return typeof s === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(s); }
 /** Validates public shapes and canonical submission derivation; does not assert live account validity. */
 function bindings(input: RecoveryBindings): Readonly<RecoveryBindings> {
@@ -76,6 +82,7 @@ function bindings(input: RecoveryBindings): Readonly<RecoveryBindings> {
     return Object.freeze(Object.fromEntries(bindingFields.map(k=>[k,input[k]])) as unknown as RecoveryBindings);
   } catch(e) { if(e instanceof RecoveryError) throw e; throw new RecoveryError("invalid_bindings"); }
 }
+/** Digests the attempt ID and canonically ordered immutable public bindings, not authorization authority. */
 function identity(id: string, b: RecoveryBindings): string { return sha256(Buffer.from(JSON.stringify([id,...bindingFields.map(k=>b[k])]))).toString("hex"); }
 /** Checks canonical 64-byte base58 transaction identifiers without loading a signer or wallet utility. */
 function transactionId(value: unknown): asserts value is string {
@@ -92,6 +99,7 @@ export function createRecoveryAttempt(attemptId: string, input: RecoveryBindings
   return sealAttempt({attemptId,identity:identity(attemptId,b),operationKey:`devnet:${b.programId}:${b.milestone}`,
     bindings:b,revision:0,events:Object.freeze([] as string[]),state:"authorization_prepared",phase:"authorization"});
 }
+/** Rejects foreign or serialized records, invalid revisions and changed bindings before classification. */
 function validateAttempt(a: RecoveryAttempt): void {
   check(a && attempts.has(a) && identifier(a.attemptId) && integer(a.revision) && a.revision <= 128 && Array.isArray(a.events)
     && a.events.length===a.revision && Array.from(a.events).every(identifier) && new Set(a.events).size===a.events.length,"invalid_attempt");
@@ -107,19 +115,26 @@ function validateAttempt(a: RecoveryAttempt): void {
  * Inject a trusted server-internal observation source, never an HTTP/request adapter.
  * No RPC is performed here. Sealed tokens cannot be forged by supplying or serializing status JSON.
  * The future source must independently authenticate chain/transaction evidence; this factory cannot do so.
+ * Source failures propagate unchanged. Other validation/inspection/clone failures become invalid_observation;
+ * existing RecoveryError instances retain their specific codes. No token is issued on failure.
  */
 export function createOfflineRecoveryObserver(read: (attempt: RecoveryAttempt)=>Promise<ObservationInput>) {
   return Object.freeze({observe:async(attempt: RecoveryAttempt):Promise<RecoveryObservation>=>{
     validateAttempt(attempt);
     const raw=await read(attempt);
-    check(exactFields(raw,["attemptId","expectedRevision","bindings","eventId","event"]),"invalid_observation");
-    check(exactFields(raw.bindings,bindingFields) && dataObject(raw.event),"invalid_observation");
-    const input=structuredClone(raw);
-    check(exactFields(input,["attemptId","expectedRevision","bindings","eventId","event"]),"invalid_observation");
-    check(input && input.attemptId===attempt.attemptId && input.expectedRevision===attempt.revision,"observation_conflict");
-    check(identity(input.attemptId,bindings(input.bindings))===attempt.identity,"changed_bindings");
-    check(identifier(input.eventId),"invalid_event_id");
-    const token=Object.freeze({});observations.set(token,input);return token as RecoveryObservation;
+    try {
+      check(exactFields(raw,["attemptId","expectedRevision","bindings","eventId","event"]),"invalid_observation");
+      check(exactFields(raw.bindings,bindingFields) && dataObject(raw.event),"invalid_observation");
+      const input=structuredClone(raw);
+      check(exactFields(input,["attemptId","expectedRevision","bindings","eventId","event"]),"invalid_observation");
+      check(input && input.attemptId===attempt.attemptId && input.expectedRevision===attempt.revision,"observation_conflict");
+      check(identity(input.attemptId,bindings(input.bindings))===attempt.identity,"changed_bindings");
+      check(identifier(input.eventId),"invalid_event_id");
+      const token=Object.freeze({});observations.set(token,input);return token as RecoveryObservation;
+    } catch(error) {
+      if(error instanceof RecoveryError) throw error;
+      throw new RecoveryError("invalid_observation");
+    }
   }});
 }
 /**
