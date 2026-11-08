@@ -12,6 +12,8 @@ pub struct CreateInternship<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Initializes the sponsor-scoped internship with its immutable sponsor, ID and canonical bump.
+/// Anchor requires the sponsor signature and rent payment and rejects a wrong PDA or existing account.
 pub fn handle_create_internship(ctx: Context<CreateInternship>, internship_id: u64) -> Result<()> {
     ctx.accounts.internship.set_inner(Internship {
         sponsor: ctx.accounts.sponsor.key(),

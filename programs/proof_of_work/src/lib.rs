@@ -17,9 +17,12 @@ declare_id!("J2FkqDuuuHT14gxjVMhSryrX3Bs4Knct45NMLA79dGdZ");
 pub mod proof_of_work {
     use super::*;
 
+    /// Creates an internship PDA funded and authorized by its sponsor; rejects invalid accounts or reuse.
     pub fn create_internship(ctx: Context<CreateInternship>, internship_id: u64) -> Result<()> {
         instructions::finance::create_internship::handle_create_internship(ctx, internship_id)
     }
+    /// Creates a sponsor-authorized `Created` milestone after validating its parent, DEMO mint and terms.
+    /// Rejects invalid authority, verifier, reward, hash, deadlines or account initialization; moves no tokens.
     pub fn create_milestone(
         ctx: Context<CreateMilestone>,
         milestone_id: u64,

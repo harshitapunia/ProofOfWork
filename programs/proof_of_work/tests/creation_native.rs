@@ -52,6 +52,8 @@ impl SyscallStubs for HostStubs {
         0
     }
 
+    /// Models fresh System account creation, checking payer privileges, PDA seeds, space and rent balance.
+    /// Rejects unsupported CPIs or existing accounts; this stub does not execute the SBF runtime.
     fn sol_invoke_signed(
         &self,
         instruction: &Instruction,
@@ -119,6 +121,7 @@ impl Drop for Environment {
     }
 }
 
+/// Builds a native public-account fixture, leaving fresh zeroed data accounts unfunded for init tests.
 fn info(
     key: Pubkey,
     owner: Pubkey,
@@ -154,6 +157,7 @@ fn load<T: AccountDeserialize>(account: &AccountInfo) -> T {
     T::try_deserialize(&mut &account.try_borrow_data().unwrap()[..]).unwrap()
 }
 
+/// Finds a deterministic nonzero on-curve public key without creating signing credentials.
 fn public_key(seed: u8) -> Pubkey {
     // Deterministic public-only on-curve test fixture. No signing key is generated.
     (seed..=255)
@@ -163,6 +167,8 @@ fn public_key(seed: u8) -> Pubkey {
 }
 
 use anchor_spl::token::spl_token::{self, state::Mint};
+/// Invokes the generated Anchor entrypoint and restores account snapshots on failure.
+/// Rollback is modeled by this host harness, not verified against a Solana bank runtime.
 fn execute(accounts: Vec<AccountInfo<'static>>, data: Vec<u8>) -> ProgramResult {
     let snapshots: Vec<_> = accounts
         .iter()
@@ -319,6 +325,7 @@ impl Creation {
 }
 
 #[test]
+/// Checks canonical internship fields and size, and that the sponsor alone pays the modeled rent.
 fn internship_creation_records_canonical_immutable_fields_and_sponsor_pays() {
     let _env = Environment::new();
     let f = Creation::new();
@@ -341,6 +348,7 @@ fn internship_creation_records_canonical_immutable_fields_and_sponsor_pays() {
     );
 }
 #[test]
+/// Rejects missing sponsor privileges, incorrect PDA and wrong System Program without retaining rent changes.
 fn internship_rejects_missing_signer_readonly_payer_wrong_pda_and_wrong_system() {
     let _env = Environment::new();
     for kind in 0..4 {
@@ -379,6 +387,7 @@ fn internship_rejects_missing_signer_readonly_payer_wrong_pda_and_wrong_system()
     }
 }
 #[test]
+/// Rejects a foreign signer for the original sponsor namespace and preserves state on duplicate init.
 fn internship_rejects_other_signer_for_sponsor_scoped_pda_and_duplicate_init() {
     let _env = Environment::new();
     let mut f = Creation::new();
@@ -401,6 +410,7 @@ fn internship_rejects_other_signer_for_sponsor_scoped_pda_and_duplicate_init() {
     assert_eq!(f.sponsor.lamports(), balance);
 }
 #[test]
+/// Checks every initial milestone field and canonical bump, with no change to mint data.
 fn milestone_creation_initializes_exact_terms_state_bumps_and_only_rent_changes() {
     let _env = Environment::new();
     let f = Creation::new();
@@ -452,6 +462,7 @@ fn milestone_creation_initializes_exact_terms_state_bumps_and_only_rent_changes(
     assert_eq!(f.mint.try_borrow_data().unwrap().to_vec(), mint);
 }
 #[test]
+/// Requires positive reward and a nonzero commitment; verifies the harness restores failed initialization.
 fn milestone_rejects_zero_reward_and_hash_with_rollback() {
     let _env = Environment::new();
     let f = Creation::new();
@@ -473,6 +484,7 @@ fn milestone_rejects_zero_reward_and_hash_with_rollback() {
     }
 }
 #[test]
+/// Rejects nonpositive time and invalid cutoff ordering, including equality at each exclusive boundary.
 fn milestone_deadline_boundaries_are_strict() {
     let _env = Environment::new();
     let f = Creation::new();
@@ -496,6 +508,7 @@ fn milestone_deadline_boundaries_are_strict() {
     f.valid().unwrap();
 }
 #[test]
+/// Rejects a zero verifier, the sponsor as verifier and an off-curve verifier PDA.
 fn milestone_rejects_zero_sponsor_and_offcurve_verifiers() {
     let _env = Environment::new();
     let f = Creation::new();
@@ -512,6 +525,7 @@ fn milestone_rejects_zero_sponsor_and_offcurve_verifiers() {
     }
 }
 #[test]
+/// Rejects missing sponsor signature, readonly rent payer and a signer unrelated to the recorded sponsor.
 fn milestone_requires_recorded_sponsor_signature_and_writable_payer() {
     let _env = Environment::new();
     for kind in 0..3 {
@@ -538,6 +552,7 @@ fn milestone_requires_recorded_sponsor_signature_and_writable_payer() {
     }
 }
 #[test]
+/// Rejects corrupted parent ownership, PDA key, stored bump and sponsor binding before retaining a child.
 fn milestone_rejects_foreign_parent_owner_key_bump_or_sponsor_binding() {
     let _env = Environment::new();
     for kind in 0..4 {
@@ -564,6 +579,7 @@ fn milestone_rejects_foreign_parent_owner_key_bump_or_sponsor_binding() {
     }
 }
 #[test]
+/// Rejects an incorrect child PDA and prevents duplicate initialization from overwriting milestone bytes.
 fn milestone_rejects_wrong_pda_and_duplicate_initialization() {
     let _env = Environment::new();
     let mut f = Creation::new();
@@ -585,6 +601,7 @@ fn milestone_rejects_wrong_pda_and_duplicate_initialization() {
     assert_eq!(f.milestone.try_borrow_data().unwrap().to_vec(), before);
 }
 #[test]
+/// Rejects unrelated and wrapped-native mint addresses even when their fixture bytes resemble a valid mint.
 fn milestone_rejects_wrong_and_native_mints() {
     let _env = Environment::new();
     for key in [public_key(210), spl_token::native_mint::ID] {
@@ -596,6 +613,7 @@ fn milestone_rejects_wrong_and_native_mints() {
     }
 }
 #[test]
+/// Rejects freeze authority, wrong DEMO decimals and an uninitialized classic mint.
 fn milestone_rejects_freezable_wrong_decimals_and_uninitialized_mints() {
     let _env = Environment::new();
     for kind in 0..3 {
@@ -621,6 +639,7 @@ fn milestone_rejects_freezable_wrong_decimals_and_uninitialized_mints() {
     }
 }
 #[test]
+/// Rejects foreign mint ownership, wrong or nonexecutable token program and malformed mint data.
 fn milestone_requires_classic_mint_owner_and_executable_token_program() {
     let _env = Environment::new();
     for kind in 0..4 {
@@ -650,6 +669,8 @@ fn milestone_requires_classic_mint_owner_and_executable_token_program() {
     }
 }
 #[test]
+/// Rejects assignment from `Created`, then checks the existing assignment/submission/attestation flow.
+/// The test simulates `Funded` state directly; it does not test funding or token transfers.
 fn created_state_cannot_skip_funding_and_remains_compatible_with_verification() {
     let _env = Environment::new();
     let f = Creation::new();
@@ -713,6 +734,7 @@ fn created_state_cannot_skip_funding_and_remains_compatible_with_verification() 
 }
 
 #[test]
+/// Rejects both Token-2022-owned mint data and the Token-2022 program in the classic-token context.
 fn milestone_rejects_token_2022_mint_ownership_and_program() {
     let _env = Environment::new();
     let token_2022 = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");

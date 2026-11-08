@@ -26,6 +26,10 @@ pub struct CreateMilestone<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Creates an unfunded milestone with immutable terms, canonical vault bumps and unset work bindings.
+/// Anchor requires the parent sponsor signature, canonical PDAs and the approved classic DEMO mint.
+/// Returns `InvalidTerms` for zero reward/hash or invalid deadlines and `InvalidRole` for an invalid verifier;
+/// account constraints reject an incorrect, native, freezable or wrong-decimal mint and duplicate creation.
 pub fn handle_create_milestone(
     ctx: Context<CreateMilestone>,
     milestone_id: u64,
