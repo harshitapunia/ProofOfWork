@@ -23,7 +23,7 @@ custom-panic = []
 
 [dependencies]
 anchor-lang = "=1.2.2"
-anchor-spl = { version = "=1.2.2", default-features = false, features = ["token", "solana-v3"] }
+anchor-spl = { version = "=1.2.2", default-features = false, features = ["token", "token_2022", "associated_token", "solana-v3"] }
 
 
 [lints.rust]
@@ -31,3 +31,4 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"
 
 [dev-dependencies]
 solana-sysvar = "=3.1.1"
+spl-token = { version = "=9.0.0", features = ["no-entrypoint"] }
