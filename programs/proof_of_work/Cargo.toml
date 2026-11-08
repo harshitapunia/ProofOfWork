@@ -14,7 +14,8 @@ default = []
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-log-ix-name = []
-idl-build = ["anchor-lang/idl-build"]
+# anchor-spl 1.2.2 IDL implementations also reference token_interface at build time.
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build", "anchor-spl/token_2022"]
 anchor-debug = []
 custom-heap = []
 custom-panic = []
@@ -22,6 +23,7 @@ custom-panic = []
 
 [dependencies]
 anchor-lang = "=1.2.2"
+anchor-spl = { version = "=1.2.2", default-features = false, features = ["token", "solana-v3"] }
 
 
 [lints.rust]
