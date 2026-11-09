@@ -5,6 +5,7 @@
 //! This is not SBF VM execution or a signed Solana transaction test.
 
 use anchor_lang::{
+    error::ErrorCode,
     prelude::*,
     solana_program::{
         instruction::Instruction,
@@ -36,6 +37,7 @@ static TRANSFER_AMOUNT: AtomicU64 = AtomicU64::new(0);
 struct HostStubs;
 
 impl SyscallStubs for HostStubs {
+    /// Supplies the test-controlled Clock sysvar; no validator clock or network is consulted.
     fn sol_get_clock_sysvar(&self, address: *mut u8) -> u64 {
         let clock = Clock {
             unix_timestamp: NOW.load(Ordering::SeqCst),
@@ -48,6 +50,7 @@ impl SyscallStubs for HostStubs {
         0
     }
 
+    /// Supplies default rent parameters for host-side account-creation fixtures.
     fn sol_get_rent_sysvar(&self, address: *mut u8) -> u64 {
         // The sysvar ABI supplies an aligned, writable Rent-sized buffer.
         unsafe {
@@ -56,8 +59,8 @@ impl SyscallStubs for HostStubs {
         0
     }
 
-    /// Models fresh System account creation, checking payer privileges, PDA seeds, space and rent balance.
-    /// Rejects unsupported CPIs or existing accounts; this stub does not execute the SBF runtime.
+    /// Checks CPI privileges and derives PDA signers before running the real native SPL processor.
+    /// Models only fresh System creates; neither this stub nor its fault injection executes a bank/SBF runtime.
     fn sol_invoke_signed(
         &self,
         instruction: &Instruction,
@@ -159,6 +162,7 @@ struct Environment {
 }
 
 impl Environment {
+    /// Serializes tests that replace global syscall stubs and resets modeled time and CPI faults.
     fn new() -> Self {
         let lock = HOST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         NOW.store(100, Ordering::SeqCst);
@@ -172,6 +176,7 @@ impl Environment {
 }
 
 impl Drop for Environment {
+    /// Restores the previous syscall implementation before releasing the global test lock.
     fn drop(&mut self) {
         set_syscall_stubs(self.previous.take().unwrap());
     }
@@ -203,12 +208,14 @@ fn info(
     )
 }
 
+/// Serializes a fixture, including deliberate corruptions used to isolate account validation.
 fn store<T: AccountSerialize>(account: &AccountInfo, value: &T) {
     value
         .try_serialize(&mut &mut account.try_borrow_mut_data().unwrap()[..])
         .unwrap();
 }
 
+/// Deserializes fixture state for assertions on immutable fields and lifecycle transitions.
 fn load<T: AccountDeserialize>(account: &AccountInfo) -> T {
     T::try_deserialize(&mut &account.try_borrow_data().unwrap()[..]).unwrap()
 }
@@ -254,6 +261,12 @@ fn execute(accounts: Vec<AccountInfo<'static>>, data: Vec<u8>) -> ProgramResult 
     result
 }
 
+/// Converts a named Anchor error into the exact ProgramError returned by the entrypoint.
+fn anchor_error(code: ErrorCode) -> ProgramError {
+    ProgramError::Custom(code.into())
+}
+
+/// Asserts a ProofOfWork domain error, distinct from Anchor constraints and SPL processor failures.
 fn error(result: ProgramResult, expected: ProofOfWorkError) {
     assert_eq!(result, Err(ProgramError::Custom(u32::from(expected))));
 }
@@ -392,6 +405,7 @@ impl Funding {
     fn fund(&self) -> ProgramResult {
         execute(self.accounts(), instruction::FundMilestone {}.data())
     }
+    /// Builds the funding account order, including the System Program used by vault initialization.
     fn accounts(&self) -> Vec<AccountInfo<'static>> {
         vec![
             self.sponsor.clone(),
@@ -405,11 +419,13 @@ impl Funding {
             self.system.clone(),
         ]
     }
+    /// Mutates packed sponsor-token fixture data to exercise owner, mint, balance and frozen-account guards.
     fn source_state(&self, change: impl FnOnce(&mut TokenAccount)) {
         let mut t = TokenAccount::unpack(&self.source.try_borrow_data().unwrap()).unwrap();
         change(&mut t);
         TokenAccount::pack(t, &mut self.source.try_borrow_mut_data().unwrap()).unwrap();
     }
+    /// Injects milestone-field mutations to test bindings and otherwise unreachable malformed states.
     fn milestone_state(&self, change: impl FnOnce(&mut Milestone)) {
         let mut m: Milestone = load(&self.milestone);
         change(&mut m);
@@ -421,6 +437,7 @@ struct Refund {
     funding: Funding,
 }
 impl Refund {
+    /// Creates and funds a milestone through actual handlers, optionally assigns it, then advances the modeled clock to the cutoff.
     fn new(id: u64, assigned: bool) -> Self {
         NOW.store(100, Ordering::SeqCst);
         let mut funding = Funding::new(id);
@@ -444,6 +461,7 @@ impl Refund {
         TRANSFER_AMOUNT.store(0, Ordering::SeqCst);
         Self { funding }
     }
+    /// Builds the approved eight-account refund interface without a completion or System Program account.
     fn accounts(&self) -> Vec<AccountInfo<'static>> {
         let f = &self.funding;
         vec![
@@ -457,12 +475,14 @@ impl Refund {
             f.token.clone(),
         ]
     }
+    /// Dispatches the generated refund instruction through Anchor; execute() models rollback on failure.
     fn refund(&self) -> ProgramResult {
         execute(
             self.accounts(),
             instruction::RefundUnclaimedMilestone {}.data(),
         )
     }
+    /// Captures account owners, lamports and bytes for complete host-modeled rollback comparisons.
     fn snapshot(&self) -> Vec<(Pubkey, u64, Vec<u8>)> {
         self.accounts()
             .iter()
@@ -475,6 +495,8 @@ impl Refund {
             })
             .collect()
     }
+    /// Requires refund failure and identical account snapshots, then returns the actual error for layer-specific assertions.
+    /// Snapshot restoration is supplied by the host harness and does not establish runtime atomicity.
     fn reject(&self) -> ProgramResult {
         let before = self.snapshot();
         let result = self.refund();
@@ -486,6 +508,7 @@ impl Refund {
         );
         result
     }
+    /// Mutates packed vault fixtures to test custody, shortfalls and malformed token state.
     fn vault_state(&self, change: impl FnOnce(&mut TokenAccount)) {
         let a = &self.funding.vault;
         let mut t = TokenAccount::unpack(&a.try_borrow_data().unwrap()).unwrap();
@@ -556,12 +579,14 @@ impl Refund {
         submission
     }
 }
+/// Reads raw token units from a valid packed account for conservation and payout assertions.
 fn balance(account: &AccountInfo) -> u64 {
     TokenAccount::unpack(&account.try_borrow_data().unwrap())
         .unwrap()
         .amount
 }
 
+/// Checks both eligible states at the exact cutoff, exact principal repayment, sponsor-only rent return and the terminal status.
 #[test]
 fn funded_and_assigned_refunds_at_exact_cutoff_return_principal_and_rent() {
     let _env = Environment::new();
@@ -603,6 +628,7 @@ fn funded_and_assigned_refunds_at_exact_cutoff_return_principal_and_rent() {
     }
 }
 
+/// Proves the exclusive submission/inclusive refund boundary for both Funded and Assigned milestones.
 #[test]
 fn refunds_are_rejected_one_second_before_cutoff_and_allowed_after_it() {
     let _env = Environment::new();
@@ -616,6 +642,7 @@ fn refunds_are_rejected_one_second_before_cutoff_and_allowed_after_it() {
     }
 }
 
+/// Uses a real native SPL donation transfer and checks that surplus tokens and all vault lamports return to the sponsor.
 #[test]
 fn unsolicited_tokens_and_extra_vault_lamports_return_to_recorded_sponsor() {
     let _env = Environment::new();
@@ -659,6 +686,7 @@ fn unsolicited_tokens_and_extra_vault_lamports_return_to_recorded_sponsor() {
     );
 }
 
+/// Separately proves typed signer validation, writable constraints and recorded-sponsor authorization.
 #[test]
 fn only_recorded_sponsor_with_required_privileges_can_refund() {
     let _env = Environment::new();
@@ -679,11 +707,19 @@ fn only_recorded_sponsor_with_required_privileges_can_refund() {
             }
             _ => unreachable!(),
         }
-        let _ = r.reject();
+        let expected = match kind {
+            // Signer deserialization precedes the account's explicit constraints.
+            0 => anchor_error(ErrorCode::AccountNotSigner),
+            1 => anchor_error(ErrorCode::ConstraintMut),
+            2 => ProgramError::Custom(u32::from(ProofOfWorkError::InvalidRole)),
+            _ => unreachable!(),
+        };
+        assert_eq!(r.reject(), Err(expected), "sponsor case {kind}");
         assert_eq!(TRANSFER_AMOUNT.load(Ordering::SeqCst), 0);
     }
 }
 
+/// Keeps a valid live vault while proving every noneligible status fails the handler state gate.
 #[test]
 fn all_other_statuses_are_rejected_even_with_empty_submission_fields() {
     let _env = Environment::new();
@@ -700,6 +736,7 @@ fn all_other_statuses_are_rejected_even_with_empty_submission_fields() {
     }
 }
 
+/// Executes submission and optional attestation, then proves elapsed time cannot unlock a sponsor refund.
 #[test]
 fn timely_submitted_or_verified_work_never_becomes_refundable() {
     let _env = Environment::new();
@@ -713,6 +750,7 @@ fn timely_submitted_or_verified_work_never_becomes_refundable() {
     }
 }
 
+/// Proves either a linked submission or nonzero verification time blocks refund despite an eligible status.
 #[test]
 fn submission_or_verification_binding_blocks_refund_even_in_eligible_status() {
     let _env = Environment::new();
@@ -731,6 +769,7 @@ fn submission_or_verification_binding_blocks_refund_even_in_eligible_status() {
     }
 }
 
+/// Checks exact ownership, binding and seed errors for parent/child substitutions and all four stored bumps.
 #[test]
 fn parent_child_ownership_pdas_and_all_stored_bumps_are_validated() {
     let _env = Environment::new();
@@ -767,10 +806,17 @@ fn parent_child_ownership_pdas_and_all_stored_bumps_are_validated() {
             }
             _ => unreachable!(),
         }
-        let _ = r.reject();
+        let expected = match kind {
+            0 | 1 => anchor_error(ErrorCode::AccountOwnedByWrongProgram),
+            2 | 3 => ProgramError::Custom(u32::from(ProofOfWorkError::BindingMismatch)),
+            4..=9 => anchor_error(ErrorCode::ConstraintSeeds),
+            _ => unreachable!(),
+        };
+        assert_eq!(r.reject(), Err(expected), "parent/child case {kind}");
     }
 }
 
+/// Distinguishes vault seed, token-binding, custody and unpack failures without weakening modeled rollback assertions.
 #[test]
 fn vault_address_authority_owner_mint_delegate_close_authority_and_native_checks() {
     let _env = Environment::new();
@@ -809,10 +855,22 @@ fn vault_address_authority_owner_mint_delegate_close_authority_and_native_checks
             }
             _ => unreachable!(),
         }
-        let _ = r.reject();
+        let expected = match kind {
+            0 => anchor_error(ErrorCode::ConstraintSeeds),
+            // The vault's token::authority check runs before the authority PDA's seeds check.
+            1 | 3 => anchor_error(ErrorCode::ConstraintTokenOwner),
+            2 => anchor_error(ErrorCode::AccountOwnedByWrongProgram),
+            4 => anchor_error(ErrorCode::ConstraintTokenMint),
+            5..=7 => ProgramError::Custom(u32::from(ProofOfWorkError::InvalidVault)),
+            // anchor-spl propagates SPL Pack's malformed-data error without an Anchor code.
+            8 => ProgramError::InvalidAccountData,
+            _ => unreachable!(),
+        };
+        assert_eq!(r.reject(), Err(expected), "vault case {kind}");
     }
 }
 
+/// Checks destination identity, internal owner/mint and program ownership, including Anchor duplicate-account rejection.
 #[test]
 fn canonical_sponsor_ata_internal_owner_mint_and_alias_constraints_are_enforced() {
     let _env = Environment::new();
@@ -829,10 +887,21 @@ fn canonical_sponsor_ata_internal_owner_mint_and_alias_constraints_are_enforced(
             4 => r.funding.source = r.funding.vault.clone(),
             _ => unreachable!(),
         }
-        let _ = r.reject();
+        let expected = match kind {
+            0 => ProgramError::Custom(u32::from(ProofOfWorkError::InvalidDestination)),
+            1 => anchor_error(ErrorCode::ConstraintTokenOwner),
+            2 => anchor_error(ErrorCode::ConstraintTokenMint),
+            3 => anchor_error(ErrorCode::AccountOwnedByWrongProgram),
+            // Anchor 1.2.2 checks duplicate mutable accounts before token constraints.
+            // The alias never reaches the handler's defensive InvalidDestination check.
+            4 => anchor_error(ErrorCode::ConstraintDuplicateMutableAccount),
+            _ => unreachable!(),
+        };
+        assert_eq!(r.reject(), Err(expected), "ATA case {kind}");
     }
 }
 
+/// Checks configured mint terms, classic ownership, program identity/executability and uninitialized mint deserialization.
 #[test]
 fn approved_classic_nonfreezable_mint_and_executable_token_program_are_required() {
     let _env = Environment::new();
@@ -876,10 +945,20 @@ fn approved_classic_nonfreezable_mint_and_executable_token_program_are_required(
             }
             _ => unreachable!(),
         }
-        let _ = r.reject();
+        let expected = match kind {
+            0 | 1 | 3..=5 => ProgramError::Custom(u32::from(ProofOfWorkError::InvalidMint)),
+            2 => anchor_error(ErrorCode::AccountOwnedByWrongProgram),
+            6 => anchor_error(ErrorCode::InvalidProgramId),
+            7 => anchor_error(ErrorCode::InvalidProgramExecutable),
+            // A classic-owned mint with zeroed bytes fails SPL unpack's initialization check.
+            8 => ProgramError::UninitializedAccount,
+            _ => unreachable!(),
+        };
+        assert_eq!(r.reject(), Err(expected), "mint/program case {kind}");
     }
 }
 
+/// Requires sufficient principal backing and valid positive reward/deadline terms before any disposal.
 #[test]
 fn shortfall_zero_principal_and_malformed_deadlines_fail_closed() {
     let _env = Environment::new();
@@ -897,6 +976,7 @@ fn shortfall_zero_principal_and_malformed_deadlines_fail_closed() {
     }
 }
 
+/// Exercises maximum-u64 principal and surplus totals while preserving exact raw-unit repayment.
 #[test]
 fn maximum_raw_balance_refunds_without_overflow() {
     let _env = Environment::new();
@@ -915,12 +995,19 @@ fn maximum_raw_balance_refunds_without_overflow() {
     }
 }
 
+/// Proves replay fails while loading the closed vault and cannot create another payout.
 #[test]
 fn repeated_refund_is_rejected_without_additional_payout() {
     let _env = Environment::new();
     let r = Refund::new(2, false);
     r.refund().unwrap();
-    let _ = r.reject();
+    // Closing the vault leaves zero lamports and System ownership. Typed account loading
+    // rejects it before the handler can evaluate InvalidState; the live-vault status
+    // matrix separately proves that Refunded is rejected by the handler itself.
+    assert_eq!(
+        r.reject(),
+        Err(anchor_error(ErrorCode::AccountNotInitialized))
+    );
     assert_eq!(balance(&r.funding.source), 1000);
     assert_eq!(
         load::<Milestone>(&r.funding.milestone).status,
@@ -928,6 +1015,7 @@ fn repeated_refund_is_rejected_without_additional_payout() {
     );
 }
 
+/// Checks exact substitution failures and unchanged snapshots for both milestone escrows.
 #[test]
 fn cross_milestone_vault_authority_and_parent_substitution_preserve_both_escrows() {
     let _env = Environment::new();
@@ -950,11 +1038,19 @@ fn cross_milestone_vault_authority_and_parent_substitution_preserve_both_escrows
             }
             _ => unreachable!(),
         }
-        let _ = r.reject();
+        let expected = match kind {
+            0 | 2 => anchor_error(ErrorCode::ConstraintSeeds),
+            // Substituting authority first invalidates the original vault's internal owner binding.
+            1 => anchor_error(ErrorCode::ConstraintTokenOwner),
+            _ => unreachable!(),
+        };
+        assert_eq!(r.reject(), Err(expected), "cross-milestone case {kind}");
         assert_eq!(other.snapshot(), before);
     }
 }
 
+/// Injects transfer, close and residual-balance failures and verifies restored host snapshots and status.
+/// This tests error propagation with modeled rollback, not Solana transaction atomicity.
 #[test]
 fn transfer_close_and_residual_balance_faults_have_modeled_full_rollback() {
     let _env = Environment::new();
@@ -975,6 +1071,8 @@ fn transfer_close_and_residual_balance_faults_have_modeled_full_rollback() {
     }
 }
 
+/// Uses real native SPL frozen-account and overflow errors, including close failure after token transfer.
+/// Account restoration remains host-modeled even though SPL rejection logic is real.
 #[test]
 fn actual_token_transfer_and_close_rejections_have_modeled_rollback() {
     let _env = Environment::new();
@@ -997,6 +1095,7 @@ fn actual_token_transfer_and_close_rejections_have_modeled_rollback() {
     }
 }
 
+/// Requires the exact Anchor mut-constraint error for each writable account when supplied readonly.
 #[test]
 fn writable_flags_are_enforced_for_every_mutable_account() {
     let _env = Environment::new();
@@ -1008,10 +1107,15 @@ fn writable_flags_are_enforced_for_every_mutable_account() {
             2 => r.funding.vault.is_writable = false,
             _ => r.funding.source.is_writable = false,
         }
-        let _ = r.reject();
+        assert_eq!(
+            r.reject(),
+            Err(anchor_error(ErrorCode::ConstraintMut)),
+            "readonly account case {kind}"
+        );
     }
 }
 
+/// Proves the CPI emulator rejects absent/unrelated PDA signer seeds before the SPL processor can move funds.
 #[test]
 fn native_cpi_signer_emulation_rejects_missing_and_wrong_seeds() {
     let _env = Environment::new();
@@ -1036,19 +1140,24 @@ fn native_cpi_signer_emulation_rejects_missing_and_wrong_seeds() {
     ];
     let before = r.snapshot();
     assert!(!f.authority.is_signer);
-    assert!(HostStubs.sol_invoke_signed(&ix, &accounts, &[]).is_err());
+    assert_eq!(
+        HostStubs.sol_invoke_signed(&ix, &accounts, &[]),
+        Err(ProgramError::MissingRequiredSignature)
+    );
     let other = public_key(210);
     let (_, bump) = Pubkey::find_program_address(&[b"vault_authority", other.as_ref()], &ID);
-    assert!(HostStubs
-        .sol_invoke_signed(
+    assert_eq!(
+        HostStubs.sol_invoke_signed(
             &ix,
             &accounts,
             &[&[b"vault_authority", other.as_ref(), &[bump]]]
-        )
-        .is_err());
+        ),
+        Err(ProgramError::MissingRequiredSignature)
+    );
     assert_eq!(r.snapshot(), before);
 }
 
+/// Pins the compiled account order, permissions, no-argument encoding and independently derived discriminator.
 #[test]
 fn compiled_refund_abi_matches_approved_order_flags_and_no_arguments() {
     use anchor_lang::ToAccountMetas;
