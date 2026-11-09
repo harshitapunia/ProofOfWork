@@ -49,6 +49,11 @@ pub mod proof_of_work {
         instructions::finance::fund_milestone::handle_fund_milestone(ctx)
     }
 
+    /// Returns unclaimed escrow to the sponsor after the submission cutoff, then closes the vault.
+    pub fn refund_unclaimed_milestone(ctx: Context<RefundUnclaimedMilestone>) -> Result<()> {
+        instructions::finance::refund_unclaimed_milestone::handle_refund_unclaimed_milestone(ctx)
+    }
+
     pub fn assign_student(ctx: Context<AssignStudent>, student: Pubkey) -> Result<()> {
         instructions::verification::assign_student::handle_assign_student(ctx, student)
     }
