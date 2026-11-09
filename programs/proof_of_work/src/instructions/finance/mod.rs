@@ -5,3 +5,5 @@ pub use create_internship::*;
 pub use create_milestone::*;
 pub mod fund_milestone;
 pub use fund_milestone::*;
+pub mod settle_milestone;
+pub use settle_milestone::*;
