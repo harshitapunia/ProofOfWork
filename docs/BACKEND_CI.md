@@ -9,8 +9,8 @@ native Rust/Rust security; compiled ABI; keyless SBF/all LiteSVM tests.
 
 Finance/verifier jobs perform clean locked installs, type checking, builds and
 full default test suites. Live GitHub/Devnet/blockhash scripts are excluded.
-The ABI job runs both compiled Rust exporters and shares its local target cache
-between them. The runtime job builds SBF once and runs the complete bridge once,
+The ABI job fetches locked Rust dependencies before its offline exporters and
+shares their local target cache between both comparisons. The runtime job builds SBF once and runs the complete bridge once,
 including all core suites; it rejects missing, failed, ignored or filtered cases.
 Historical counts (98 native, 112 finance, 330 verifier, 25 compatibility, 23 core
 runtime and 26 bridge) are baselines, not fabricated CI results or fixed future
@@ -28,7 +28,8 @@ files may be uploaded, never wallet files or deployment binaries.
 
 Node 24.14.1 and Rust/Cargo 1.98.1 are selected explicitly. Rustup uses official
 Rust distribution manifests/checksums; setup-node uses official Node distribution
-verification. Actions are pinned to immutable commits. The repository Rust pin
+verification. Actions are pinned to immutable Node-24-compatible commits; automatic npm caching
+is explicitly disabled. The repository Rust pin
 does not change global rustup or Git defaults.
 
 .github/ci-tools.json records official release URLs and published SHA-256
