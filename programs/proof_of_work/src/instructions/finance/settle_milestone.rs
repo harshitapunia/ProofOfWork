@@ -51,7 +51,9 @@ pub struct SettleMilestone<'info> {
     pub student_ata: Account<'info, TokenAccount>,
     #[account(mut, token::mint = reward_mint, token::token_program = token_program,
         constraint = sponsor_ata.owner == milestone.sponsor @ ProofOfWorkError::InvalidDestination,
-        address = get_associated_token_address_with_program_id(&milestone.sponsor, &reward_mint.key(), &token_program.key()) @ ProofOfWorkError::InvalidDestination)]
+        constraint = sponsor_ata.state == token::spl_token::state::AccountState::Initialized @ ProofOfWorkError::InvalidDestination,
+        constraint = !sponsor_ata.is_native() @ ProofOfWorkError::InvalidDestination)]
+    // Policy v2 review candidate: legacy slot name; canonical ATA preferred, not required.
     pub sponsor_ata: Account<'info, TokenAccount>,
     /// CHECK: Only receives vault lamports; the immutable sponsor address is checked, without a signature.
     #[account(mut, address = milestone.sponsor @ ProofOfWorkError::InvalidDestination)]

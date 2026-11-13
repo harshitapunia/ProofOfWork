@@ -745,7 +745,7 @@ fn settlement_rejects_every_other_state() {
 }
 
 #[test]
-fn canonical_destinations_internal_owners_mints_and_rent_recipient_are_mandatory() {
+fn student_canonical_destination_and_all_authorities_mints_and_rent_recipient_are_mandatory() {
     let _env = Environment::new();
     for kind in 0..11 {
         let mut s = Settlement::new(2);
@@ -945,14 +945,14 @@ fn real_token_processor_rejections_after_partial_progress_model_rollback() {
             0 => change_token(&s.student_ata, |t| t.state = AccountState::Frozen),
             1 => {
                 change_token(&s.funding.vault, |t| t.amount = 135);
-                change_token(&s.funding.source, |t| t.state = AccountState::Frozen);
+                change_token(&s.funding.source, |t| t.amount = u64::MAX);
             }
             2 => change_token(&s.student_ata, |t| t.amount = u64::MAX),
             3 => **s.funding.sponsor.try_borrow_mut_lamports().unwrap() = u64::MAX,
             _ => unreachable!(),
         }
         let result = s.reject();
-        let expected = if kind < 2 {
+        let expected = if kind == 0 {
             spl_token::error::TokenError::AccountFrozen
         } else {
             spl_token::error::TokenError::Overflow
@@ -1160,4 +1160,259 @@ fn malformed_student_role_is_rejected_even_with_matching_submission_and_ata() {
         s.student_ata = token_info(student, 0);
         let _ = s.reject();
     }
+}
+
+/// Initializes real classic SPL storage with sponsor authority; no account keypair is created.
+/// Storage/rent are host fixtures: this does not test atomic runtime account provisioning.
+fn sponsor_destination(s: &Settlement) -> AccountInfo<'static> {
+    let destination = info(
+        public_key(230),
+        spl_token::ID,
+        false,
+        true,
+        vec![0; TokenAccount::LEN],
+        false,
+    );
+    **destination.try_borrow_mut_lamports().unwrap() =
+        Rent::default().minimum_balance(TokenAccount::LEN);
+    let ix = spl_token::instruction::initialize_account3(
+        &spl_token::ID,
+        destination.key,
+        s.funding.mint.key,
+        s.funding.sponsor.key,
+    )
+    .unwrap();
+    spl_token::processor::Processor::process(
+        &spl_token::ID,
+        &[destination.clone(), s.funding.mint.clone()],
+        &ix.data,
+    )
+    .unwrap();
+    assert_ne!(destination.key, s.funding.source.key);
+    assert_eq!(
+        TokenAccount::unpack(&destination.try_borrow_data().unwrap())
+            .unwrap()
+            .owner,
+        *s.funding.sponsor.key
+    );
+    destination
+}
+
+/// Donates existing tokens with the real processor, preserving the fixture's supply.
+fn donate_from_sponsor(s: &Settlement, amount: u64) {
+    if amount == 0 {
+        return;
+    }
+    let mut sponsor = s.funding.sponsor.clone();
+    sponsor.is_signer = true; // Native privilege fixture, not a cryptographic signature.
+    let ix = spl_token::instruction::transfer_checked(
+        &spl_token::ID,
+        s.funding.source.key,
+        s.funding.mint.key,
+        s.funding.vault.key,
+        sponsor.key,
+        &[],
+        amount,
+        DEMO_DECIMALS,
+    )
+    .unwrap();
+    spl_token::processor::Processor::process(
+        &spl_token::ID,
+        &[
+            s.funding.source.clone(),
+            s.funding.mint.clone(),
+            s.funding.vault.clone(),
+            sponsor,
+        ],
+        &ix.data,
+    )
+    .unwrap();
+}
+
+#[test]
+fn sponsor_owned_noncanonical_destination_accepts_zero_and_positive_surplus() {
+    let _env = Environment::new();
+    for surplus in [0, 35] {
+        let mut s = Settlement::new(2);
+        donate_from_sponsor(&s, surplus);
+        let original = s.funding.source.clone();
+        let original_bytes = original.try_borrow_data().unwrap().to_vec();
+        s.funding.source = sponsor_destination(&s);
+        let rent = s.funding.vault.lamports();
+        let sponsor_sol = s.funding.sponsor.lamports();
+        s.settle().unwrap();
+        assert_eq!(balance(&s.student_ata), 100);
+        assert_eq!(balance(&s.funding.source), surplus);
+        assert_eq!(
+            balance(&original) + balance(&s.student_ata) + balance(&s.funding.source),
+            1000
+        );
+        assert_eq!(original.try_borrow_data().unwrap().to_vec(), original_bytes);
+        assert_eq!(s.funding.sponsor.lamports(), sponsor_sol + rent);
+        assert_eq!(s.funding.vault.lamports(), 0);
+        assert_eq!(
+            load::<Milestone>(&s.funding.milestone).status,
+            MilestoneStatus::Settled
+        );
+        assert_eq!(
+            load::<CompletionRecord>(&s.completion).sponsor,
+            *s.funding.sponsor.key
+        );
+        assert!(!s.funding.sponsor.is_signer);
+    }
+}
+
+#[test]
+fn real_set_authority_blocks_old_ata_but_not_sponsor_owned_fallback() {
+    let _env = Environment::new();
+    for surplus in [0, 35] {
+        let mut s = Settlement::new(2);
+        donate_from_sponsor(&s, surplus);
+        let original = s.funding.source.clone();
+        let mut sponsor = s.funding.sponsor.clone();
+        sponsor.is_signer = true;
+        let replacement = public_key(220); // Public-only fixture; no private key exists in this test.
+        let ix = spl_token::instruction::set_authority(
+            &spl_token::ID,
+            original.key,
+            Some(&replacement),
+            spl_token::instruction::AuthorityType::AccountOwner,
+            sponsor.key,
+            &[],
+        )
+        .unwrap();
+        spl_token::processor::Processor::process(
+            &spl_token::ID,
+            &[original.clone(), sponsor],
+            &ix.data,
+        )
+        .unwrap();
+        assert_eq!(
+            TokenAccount::unpack(&original.try_borrow_data().unwrap())
+                .unwrap()
+                .owner,
+            replacement
+        );
+        error(s.reject(), ProofOfWorkError::InvalidDestination);
+        assert_eq!(TRANSFERS.load(Ordering::SeqCst), 0);
+        let before = original.try_borrow_data().unwrap().to_vec();
+        s.funding.source = sponsor_destination(&s);
+        s.settle().unwrap();
+        assert_eq!(balance(&s.student_ata), 100);
+        assert_eq!(balance(&s.funding.source), surplus);
+        assert_eq!(original.try_borrow_data().unwrap().to_vec(), before);
+        assert_eq!(
+            balance(&original) + balance(&s.student_ata) + balance(&s.funding.source),
+            1000
+        );
+        assert_eq!(s.funding.vault.lamports(), 0);
+        assert_eq!(
+            load::<Milestone>(&s.funding.milestone).status,
+            MilestoneStatus::Settled
+        );
+        assert_eq!(
+            load::<CompletionRecord>(&s.completion).student,
+            public_key(70)
+        );
+        assert!(!s.funding.sponsor.is_signer);
+    }
+}
+
+#[test]
+fn sponsor_destination_must_be_usable_classic_spl_even_without_surplus() {
+    let _env = Environment::new();
+    for surplus in [0, 35] {
+        for kind in 0..8 {
+            let mut s = Settlement::new(2);
+            donate_from_sponsor(&s, surplus);
+            s.funding.source = sponsor_destination(&s);
+            match kind {
+                0 => change_token(&s.funding.source, |t| t.state = AccountState::Frozen),
+                1 => change_token(&s.funding.source, |t| t.state = AccountState::Uninitialized),
+                2 => change_token(&s.funding.source, |t| t.is_native = COption::Some(1)),
+                3 => change_token(&s.funding.source, |t| t.owner = *s.caller.key),
+                4 => change_token(&s.funding.source, |t| t.mint = public_key(220)),
+                5 => s
+                    .funding
+                    .source
+                    .assign(&pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")),
+                6 => {
+                    s.funding.source = info(
+                        public_key(230),
+                        spl_token::ID,
+                        false,
+                        true,
+                        vec![0; 5],
+                        false,
+                    )
+                }
+                7 => s.funding.source = s.student_ata.clone(),
+                _ => unreachable!(),
+            }
+            let _ = s.reject();
+            assert_eq!(TRANSFERS.load(Ordering::SeqCst), 0);
+            assert_eq!(balance(&s.student_ata), 0);
+        }
+    }
+}
+
+#[test]
+fn policy_v2_does_not_relax_funding_or_refund_canonical_ata_rules() {
+    let _env = Environment::new();
+    let mut f = Funding::new(2);
+    let canonical = f.source.clone();
+    let bytes = canonical.try_borrow_data().unwrap().to_vec();
+    f.source = info(
+        public_key(230),
+        spl_token::ID,
+        false,
+        true,
+        bytes.clone(),
+        false,
+    );
+    assert!(f.fund().is_err());
+    f.source = canonical.clone();
+    f.fund().unwrap();
+    NOW.store(300, Ordering::SeqCst);
+    let refund_accounts = |destination: AccountInfo<'static>| {
+        vec![
+            f.sponsor.clone(),
+            f.internship.clone(),
+            f.milestone.clone(),
+            f.mint.clone(),
+            f.vault.clone(),
+            f.authority.clone(),
+            destination,
+            f.token.clone(),
+        ]
+    };
+    let invalid = info(
+        public_key(230),
+        spl_token::ID,
+        false,
+        true,
+        canonical.try_borrow_data().unwrap().to_vec(),
+        false,
+    );
+    assert!(execute(
+        refund_accounts(invalid),
+        instruction::RefundUnclaimedMilestone {}.data()
+    )
+    .is_err());
+    assert_eq!(balance(&f.vault), 100);
+    assert_eq!(
+        load::<Milestone>(&f.milestone).status,
+        MilestoneStatus::Funded
+    );
+    execute(
+        refund_accounts(canonical.clone()),
+        instruction::RefundUnclaimedMilestone {}.data(),
+    )
+    .unwrap();
+    assert_eq!(balance(&canonical), 1000);
+    assert_eq!(f.vault.lamports(), 0);
+    assert_eq!(
+        load::<Milestone>(&f.milestone).status,
+        MilestoneStatus::Refunded
+    );
 }
