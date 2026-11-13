@@ -1,0 +1,70 @@
+{
+  "sha256": "1711e2dbbd2f0129f34be5d70e3e48867c42a849b2beea7d36cfbddaf2ed64e1",
+  "sources": {
+    "Cargo.toml": "39c26ec58aafd411de066121c28789e4c75891005563d764e299f15066cd5d74",
+    "Cargo.lock": "47eef7353bca3fb97c7851a94addca834a6ba497d96c137a5670c1fb62190507",
+    "programs/proof_of_work/Cargo.toml": "94ce32ae134683f53b13235f32a0ee958e070cd7a3cce3e4c0571014cafa8db6",
+    "programs/proof_of_work/src/config.rs": "2859895543d53df25741707246d3f84399ac7d60e96c896f616db8ff35d739b4",
+    "programs/proof_of_work/src/errors.rs": "767302bd3ca708a6eb0424b14784ab7b31f4fa58cbfcabdc66333744e4a2f4ce",
+    "programs/proof_of_work/src/instructions/finance/create_internship.rs": "19170fe51c5da37a1cb572e702cd9c4782c95559b2dc26f7ccf1b5c6a307301c",
+    "programs/proof_of_work/src/instructions/finance/create_milestone.rs": "3bea47b8c7106607195486a33a169305125af460e992e700fa35aa1d48b77e9d",
+    "programs/proof_of_work/src/instructions/finance/fund_milestone.rs": "96de01cebc6d1b92db9c21a8fb991ec0e77d6c1221262cb6fc18441964a74373",
+    "programs/proof_of_work/src/instructions/finance/mod.rs": "a2607342020b472918c5554a6841fbace9bcb4676a060bc48c01c8db8df69c59",
+    "programs/proof_of_work/src/instructions/finance/refund_unclaimed_milestone.rs": "7002ee7de62b218a3930ab62ae285d98daaa5caed3bff926c2e84d66f73dd6be",
+    "programs/proof_of_work/src/instructions/finance/settle_milestone.rs": "c2288deef7d9246b3bd2442ad18e342db984c96654212b47a5353a6ea0014c1d",
+    "programs/proof_of_work/src/instructions/mod.rs": "6828a95eaa394b136f58c1d419627bc63268ce13b6b06c913e31facbcb04b11a",
+    "programs/proof_of_work/src/instructions/verification/assign_student.rs": "2df0eef832e29a9533950b08bf412d11ffbb4746feecb79a3980976216c434da",
+    "programs/proof_of_work/src/instructions/verification/attest_milestone.rs": "30705d915096206c605a74ba8b72257c233febb3e2a072d5b7c529d122f4b483",
+    "programs/proof_of_work/src/instructions/verification/mod.rs": "9b2c47e1d394474a05fe541a5e1c945d01df14bed414bd0967dc5a7e0f6b1889",
+    "programs/proof_of_work/src/instructions/verification/submit_milestone.rs": "1f0fe89beb2d70133c6d0ffd292abb69e4dd76d7c3e319f2f29bc8902af59153",
+    "programs/proof_of_work/src/lib.rs": "98a3816d940a570af86f965ef4ce012d03e3bcea3819096e4ebda9dbc5addef5",
+    "programs/proof_of_work/src/seeds.rs": "2e204681e7bdfb8b993be9e69c62372d7022fb5482d6b5ec5fd27656afab89c9",
+    "programs/proof_of_work/src/state/mod.rs": "e51c10322dfe1aff1dd07c852fde373decdda569fa89b7803e6a436b3772b67f",
+    "programs/proof_of_work/tests/creation_native.rs": "1a3ff7d8ccb93ee24332d0e7c3d80870827b49fea6acf10d3ebbc0a53079b5d9",
+    "programs/proof_of_work/tests/funding_native.rs": "27b7d16875438a0305d818de4088913843b7d18467183d4d5ae0aab47d563454",
+    "programs/proof_of_work/tests/refund_native.rs": "6bd279600b0998560c2ac71a9a096792853113272ebdde8f2a49c2897234a6a0",
+    "programs/proof_of_work/tests/settlement_native.rs": "0dda40b2c6266bc2c6021d2a263c3f2dea5f9b7a77a733feded8aaac3037ebf2",
+    "programs/proof_of_work/tests/state_abi.rs": "20e051a7a016334d3aaccc94837ef130deb009ec840107f8605df6916a9cab25",
+    "programs/proof_of_work/tests/verification_native.rs": "565f52d9b48dff21a50c53fca0de5b12b452d7a5f0e3378eb0deebb2a8d76d91"
+  },
+  "historical_source": "PR24 0cb428fa617726450ae85b310b62063a1e672218 with Policy v2 correction on main 3c557ffdb5c454b3d81200ccbba89604996571a4; PR26 82c970bf8723e43f180bac5ac37ccb5944b5c422",
+  "platform_tools": "v1.57",
+  "host_rust": "1.98.1",
+  "solana_cli": "4.1.2",
+  "runtime_lock_sha256": "eeeb54bb599d19d0961ba83b40af88592f1ed49c31dff533fb5f62079aabab93",
+  "bytes": 396328,
+  "elf": {
+    "class": "ELF64",
+    "endian": "little",
+    "machine": 247,
+    "flags": 3
+  },
+  "command": [
+    "$PLATFORM_TOOLS/rust/bin/cargo",
+    "build",
+    "--lib",
+    "--release",
+    "--target",
+    "sbpfv3-solana-solana",
+    "--locked",
+    "--offline"
+  ],
+  "cwd": "programs/proof_of_work",
+  "target": "sbpfv3-solana-solana",
+  "versions": {
+    "host_rust": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "solana": "solana-cli 4.1.2 (src:182084b8; feat:c763ae0a, client:Agave)",
+    "sbf_rust": "rustc 1.95.0-dev (ae660768a 2026-08-17)",
+    "llvm": "clang version 22.1.2-rust-dev (https://github.com/anza-xyz/llvm-project.git a4135d044fb7a19f2b7e7d04d0373cd2ba190e6e)"
+  },
+  "production_lock_sha256": "47eef7353bca3fb97c7851a94addca834a6ba497d96c137a5670c1fb62190507",
+  "build_environment": {
+    "CARGO_TARGET_SBPFV3_SOLANA_SOLANA_RUSTFLAGS": "-Zremap-cwd-prefix=",
+    "RUSTC": "$PLATFORM_TOOLS/rust/bin/rustc",
+    "CC": "$PLATFORM_TOOLS/llvm/bin/clang",
+    "AR": "$PLATFORM_TOOLS/llvm/bin/llvm-ar",
+    "CARGO_TARGET_DIR": "target/keyless-sbf"
+  },
+  "integration_base_commit": "22b3707d7e6646c51fbb91ba7d3ced3bd2b2382e",
+  "client_source_sha256": "269e6a468c3fb6d36bd8feecfe19ef45116c496802f895f597add7c73fcac0e7"
+}
