@@ -54,6 +54,11 @@ pub mod proof_of_work {
         instructions::finance::refund_unclaimed_milestone::handle_refund_unclaimed_milestone(ctx)
     }
 
+    /// Permissionlessly settles verified work, closes escrow and atomically records completion.
+    pub fn settle_milestone(ctx: Context<SettleMilestone>) -> Result<()> {
+        instructions::finance::settle_milestone::handle_settle_milestone(ctx)
+    }
+
     pub fn assign_student(ctx: Context<AssignStudent>, student: Pubkey) -> Result<()> {
         instructions::verification::assign_student::handle_assign_student(ctx, student)
     }

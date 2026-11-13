@@ -7,3 +7,5 @@ pub mod fund_milestone;
 pub use fund_milestone::*;
 pub mod refund_unclaimed_milestone;
 pub use refund_unclaimed_milestone::*;
+pub mod settle_milestone;
+pub use settle_milestone::*;

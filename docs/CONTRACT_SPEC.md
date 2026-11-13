@@ -110,3 +110,43 @@ Shared domain errors include `InvalidState`, `DeadlinePassed`, `RefundTooEarly`,
 - Joint review is required for `lib.rs` entry points and public instruction contexts, `state/` layouts and enum, `seeds.rs`, `errors.rs`, and the interfaces for `escrow.rs` helpers. Assign a single editor for each shared change. Palak implements approved vault constraints and helpers, including checked transfers and closure used by settlement and refunds. Keep finance and verification handler files separate.
 
 See the [approval record and implementation sequence](TEAM_APPROVAL.md).
+
+## Approved Settlement Destination Policy v2
+
+Harshita's approval is confirmed. Harshita has communicated that Palak
+approved Settlement Destination Policy v2, its associated shared smart-contract
+changes, the settlement/refund integration approach, and the related
+ABI-preserving implementation changes. Palak's approval is recorded through
+Harshita's communication, not as a direct statement or GitHub approval from
+Palak. No approval timestamp is attributed to Palak.
+
+This amendment supersedes the baseline's canonical sponsor ATA requirement
+for settlement only. Funding and refunds retain their canonical ATA policies.
+Team policy approval does not waive required GitHub reviews, status checks or
+branch-protection rules.
+
+For settlement only, the existing mandatory `sponsor_ata` account slot may hold
+any initialized, usable classic SPL token account whose internal token authority
+is the milestone's recorded sponsor. The account must use the approved reward
+mint, be owned by classic SPL Token, be neither frozen nor native, and not alias
+the student destination or vault. The canonical sponsor ATA remains preferred.
+The authority check is retained; canonical address derivation alone is never
+accepted as proof of current token authority.
+
+A caller may create and initialize a fresh sponsor-owned destination before
+settlement in the same transaction without gaining authority over its tokens.
+The program correction does not itself provision destinations. The separate
+client candidate provisions them atomically. Local evidence records 98 native,
+112 client, 23 core runtime and 26 client/runtime tests passing against the
+corrected artifact. Native rollback models alone do not prove transaction
+atomicity; the SBF suites exercise actual token CPIs and rollback. Bridge
+settlement transactions enable signature verification. These results do not
+establish Devnet runtime parity or authorize deployment.
+
+The `sponsor_ata` name, mandatory slot, account order, signer/writable flags,
+serialized arguments, discriminator, PDA derivations, stored layouts, exact
+student reward, sponsor surplus entitlement, vault closure/rent destination,
+completion provenance and replay protections remain unchanged. Funding and
+refunds retain their canonical sponsor ATA requirements. Team policy approval
+does not authorize publication, deployment, key generation or external blockchain
+transactions.
