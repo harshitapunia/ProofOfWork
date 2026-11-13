@@ -1,0 +1,275 @@
+{
+  "root_npm_exceptions": [
+    {
+      "package": "@anchor-lang/borsh",
+      "versions": [
+        "1.2.2"
+      ],
+      "nodes": [
+        "node_modules/@anchor-lang/borsh"
+      ],
+      "severity": "moderate",
+      "via": [
+        "@solana/web3.js"
+      ],
+      "expires": "2026-12-14",
+      "reason": "Existing optional root Anchor/Mocha developer tooling; not loaded by backend packages or executed in CI. Preserve APIs here; prioritize a separately reviewed root tooling remediation. Never use this tree for untrusted input or operational signing."
+    },
+    {
+      "package": "@anchor-lang/core",
+      "versions": [
+        "1.2.2"
+      ],
+      "nodes": [
+        "node_modules/@anchor-lang/core"
+      ],
+      "severity": "high",
+      "via": [
+        "@anchor-lang/borsh",
+        "@solana/web3.js",
+        "toml"
+      ],
+      "expires": "2026-12-14",
+      "reason": "Existing optional root Anchor/Mocha developer tooling; not loaded by backend packages or executed in CI. Preserve APIs here; prioritize a separately reviewed root tooling remediation. Never use this tree for untrusted input or operational signing."
+    },
+    {
+      "package": "@solana/web3.js",
+      "versions": [
+        "1.99.0"
+      ],
+      "nodes": [
+        "node_modules/@solana/web3.js"
+      ],
+      "severity": "moderate",
+      "via": [
+        "jayson"
+      ],
+      "expires": "2026-12-14",
+      "reason": "Existing optional root Anchor/Mocha developer tooling; not loaded by backend packages or executed in CI. Preserve APIs here; prioritize a separately reviewed root tooling remediation. Never use this tree for untrusted input or operational signing."
+    },
+    {
+      "package": "diff",
+      "versions": [
+        "5.0.0"
+      ],
+      "nodes": [
+        "node_modules/diff"
+      ],
+      "severity": "low",
+      "via": [
+        "GHSA-73rr-hh4g-fpgx"
+      ],
+      "expires": "2026-12-14",
+      "reason": "Existing optional root Anchor/Mocha developer tooling; not loaded by backend packages or executed in CI. Preserve APIs here; prioritize a separately reviewed root tooling remediation. Never use this tree for untrusted input or operational signing."
+    },
+    {
+      "package": "jayson",
+      "versions": [
+        "4.3.0"
+      ],
+      "nodes": [
+        "node_modules/jayson"
+      ],
+      "severity": "moderate",
+      "via": [
+        "stream-json",
+        "uuid"
+      ],
+      "expires": "2026-12-14",
+      "reason": "Existing optional root Anchor/Mocha developer tooling; not loaded by backend packages or executed in CI. Preserve APIs here; prioritize a separately reviewed root tooling remediation. Never use this tree for untrusted input or operational signing."
+    },
+    {
+      "package": "js-yaml",
+      "versions": [
+        "4.1.0"
+      ],
+      "nodes": [
+        "node_modules/js-yaml"
+      ],
+      "severity": "high",
+      "via": [
+        "GHSA-2883-xcg3-v3hh",
+        "GHSA-52cp-r559-cp3m",
+        "GHSA-5p4m-2wfm-xmqj",
+        "GHSA-h67p-54hq-rp68",
+        "GHSA-mh29-5h37-fv8m"
+      ],
+      "expires": "2026-12-14",
+      "reason": "Existing optional root Anchor/Mocha developer tooling; not loaded by backend packages or executed in CI. Preserve APIs here; prioritize a separately reviewed root tooling remediation. Never use this tree for untrusted input or operational signing."
+    },
+    {
+      "package": "minimatch",
+      "versions": [
+        "4.2.1"
+      ],
+      "nodes": [
+        "node_modules/minimatch"
+      ],
+      "severity": "high",
+      "via": [
+        "GHSA-23c5-xmqv-rm74",
+        "GHSA-3ppc-4f35-3m26",
+        "GHSA-7r86-cg39-jmmj"
+      ],
+      "expires": "2026-12-14",
+      "reason": "Existing optional root Anchor/Mocha developer tooling; not loaded by backend packages or executed in CI. Preserve APIs here; prioritize a separately reviewed root tooling remediation. Never use this tree for untrusted input or operational signing."
+    },
+    {
+      "package": "mocha",
+      "versions": [
+        "9.2.2"
+      ],
+      "nodes": [
+        "node_modules/mocha"
+      ],
+      "severity": "high",
+      "via": [
+        "diff",
+        "js-yaml",
+        "minimatch",
+        "nanoid",
+        "serialize-javascript"
+      ],
+      "expires": "2026-12-14",
+      "reason": "Existing optional root Anchor/Mocha developer tooling; not loaded by backend packages or executed in CI. Preserve APIs here; prioritize a separately reviewed root tooling remediation. Never use this tree for untrusted input or operational signing."
+    },
+    {
+      "package": "nanoid",
+      "versions": [
+        "3.3.1"
+      ],
+      "nodes": [
+        "node_modules/nanoid"
+      ],
+      "severity": "high",
+      "via": [
+        "GHSA-28wg-ghj8-5hjv",
+        "GHSA-2v37-7h3g-55p8",
+        "GHSA-mwcw-c2x4-8c55",
+        "GHSA-xwg4-73v4-xw9w"
+      ],
+      "expires": "2026-12-14",
+      "reason": "Existing optional root Anchor/Mocha developer tooling; not loaded by backend packages or executed in CI. Preserve APIs here; prioritize a separately reviewed root tooling remediation. Never use this tree for untrusted input or operational signing."
+    },
+    {
+      "package": "serialize-javascript",
+      "versions": [
+        "6.0.0"
+      ],
+      "nodes": [
+        "node_modules/serialize-javascript"
+      ],
+      "severity": "high",
+      "via": [
+        "GHSA-5c6j-r48x-rmvq",
+        "GHSA-76p7-773f-r4q5",
+        "GHSA-m5mm-p8h7-m29v",
+        "GHSA-qj8w-gfj5-8c6v"
+      ],
+      "expires": "2026-12-14",
+      "reason": "Existing optional root Anchor/Mocha developer tooling; not loaded by backend packages or executed in CI. Preserve APIs here; prioritize a separately reviewed root tooling remediation. Never use this tree for untrusted input or operational signing."
+    },
+    {
+      "package": "stream-json",
+      "versions": [
+        "1.9.1"
+      ],
+      "nodes": [
+        "node_modules/stream-json"
+      ],
+      "severity": "moderate",
+      "via": [
+        "GHSA-528h-pc64-c93x",
+        "GHSA-hqr4-qq8f-hg3x",
+        "GHSA-mjw6-4jj6-33hc"
+      ],
+      "expires": "2026-12-14",
+      "reason": "Existing optional root Anchor/Mocha developer tooling; not loaded by backend packages or executed in CI. Preserve APIs here; prioritize a separately reviewed root tooling remediation. Never use this tree for untrusted input or operational signing."
+    },
+    {
+      "package": "toml",
+      "versions": [
+        "3.0.0"
+      ],
+      "nodes": [
+        "node_modules/toml"
+      ],
+      "severity": "high",
+      "via": [
+        "GHSA-4qx8-w7c3-pj3p",
+        "GHSA-82x6-q7mm-w9cf",
+        "GHSA-9j65-hcg3-gc64",
+        "GHSA-9qmh-m7c6-f92p",
+        "GHSA-h895-cgqg-jf52",
+        "GHSA-v5mp-jgw5-2x6j"
+      ],
+      "expires": "2026-12-14",
+      "reason": "Existing optional root Anchor/Mocha developer tooling; not loaded by backend packages or executed in CI. Preserve APIs here; prioritize a separately reviewed root tooling remediation. Never use this tree for untrusted input or operational signing."
+    },
+    {
+      "package": "uuid",
+      "versions": [
+        "8.3.2"
+      ],
+      "nodes": [
+        "node_modules/uuid"
+      ],
+      "severity": "moderate",
+      "via": [
+        "GHSA-w5hq-g745-h8pq"
+      ],
+      "expires": "2026-12-14",
+      "reason": "Existing optional root Anchor/Mocha developer tooling; not loaded by backend packages or executed in CI. Preserve APIs here; prioritize a separately reviewed root tooling remediation. Never use this tree for untrusted input or operational signing."
+    }
+  ],
+  "rust_maintenance": [
+    {
+      "lockfile": "Cargo.lock",
+      "package": "bincode",
+      "version": "1.3.3",
+      "advisory": "RUSTSEC-2025-0141",
+      "expires": "2027-02-14",
+      "reason": "Upstream Anchor/Solana/LiteSVM dependency maintenance notice, not a reported vulnerability. Reassess upstream releases; no serialization or cryptography replacement in CI work."
+    },
+    {
+      "lockfile": "tests/runtime/Cargo.lock",
+      "package": "ansi_term",
+      "version": "0.12.1",
+      "advisory": "RUSTSEC-2021-0139",
+      "expires": "2027-02-14",
+      "reason": "Upstream Anchor/Solana/LiteSVM dependency maintenance notice, not a reported vulnerability. Reassess upstream releases; no serialization or cryptography replacement in CI work."
+    },
+    {
+      "lockfile": "tests/runtime/Cargo.lock",
+      "package": "bincode",
+      "version": "1.3.3",
+      "advisory": "RUSTSEC-2025-0141",
+      "expires": "2027-02-14",
+      "reason": "Upstream Anchor/Solana/LiteSVM dependency maintenance notice, not a reported vulnerability. Reassess upstream releases; no serialization or cryptography replacement in CI work."
+    },
+    {
+      "lockfile": "tests/runtime/Cargo.lock",
+      "package": "derivative",
+      "version": "2.2.0",
+      "advisory": "RUSTSEC-2024-0388",
+      "expires": "2027-02-14",
+      "reason": "Upstream Anchor/Solana/LiteSVM dependency maintenance notice, not a reported vulnerability. Reassess upstream releases; no serialization or cryptography replacement in CI work."
+    },
+    {
+      "lockfile": "tests/runtime/Cargo.lock",
+      "package": "libsecp256k1",
+      "version": "0.7.2",
+      "advisory": "RUSTSEC-2025-0161",
+      "expires": "2027-02-14",
+      "reason": "Upstream Anchor/Solana/LiteSVM dependency maintenance notice, not a reported vulnerability. Reassess upstream releases; no serialization or cryptography replacement in CI work."
+    },
+    {
+      "lockfile": "tests/runtime/Cargo.lock",
+      "package": "paste",
+      "version": "1.0.15",
+      "advisory": "RUSTSEC-2024-0436",
+      "expires": "2027-02-14",
+      "reason": "Upstream Anchor/Solana/LiteSVM dependency maintenance notice, not a reported vulnerability. Reassess upstream releases; no serialization or cryptography replacement in CI work."
+    }
+  ]
+}

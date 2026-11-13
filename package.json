@@ -1,4 +1,7 @@
 {
+  "name": "proof-of-work-tooling",
+  "private": true,
+  "engines": { "node": ">=24 <25" },
   "license": "ISC",
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",

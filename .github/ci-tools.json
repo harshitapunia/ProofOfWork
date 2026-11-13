@@ -1,0 +1,26 @@
+{
+  "platform-tools": {
+    "url": "https://github.com/anza-xyz/platform-tools/releases/download/v1.57/platform-tools-linux-x86_64.tar.bz2",
+    "sha256": "b0f7af104adf726fff2a6a09ea2eb2f2d2965c92295f4d7388c08d140e0c2b00",
+    "executable": "rust/bin/rustc",
+    "path": "rust/bin"
+  },
+  "solana": {
+    "url": "https://github.com/anza-xyz/agave/releases/download/v4.1.2/solana-release-x86_64-unknown-linux-gnu.tar.bz2",
+    "sha256": "5991d027a686eb419a709a479178b33eb83501e8a2bfbf599a81a286bfcbf770",
+    "executable": "solana-release/bin/solana",
+    "path": "solana-release/bin"
+  },
+  "cargo-audit": {
+    "url": "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v0.23.0/cargo-audit-x86_64-unknown-linux-gnu-v0.23.0.tgz",
+    "sha256": "b77993532b253fcbf550996d7716465ec3d734d4e74e7f87bfb65a19add0fb59",
+    "executable": "cargo-audit-x86_64-unknown-linux-gnu-v0.23.0/cargo-audit",
+    "path": "cargo-audit-x86_64-unknown-linux-gnu-v0.23.0"
+  },
+  "actionlint": {
+    "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz",
+    "sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8",
+    "executable": "actionlint",
+    "path": "."
+  }
+}

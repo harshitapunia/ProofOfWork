@@ -18,3 +18,7 @@ test-ledger
 **/*.key
 *.log
 /tmp/
+
+# Python CI helper caches
+__pycache__/
+*.pyc

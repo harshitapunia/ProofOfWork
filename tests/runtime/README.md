@@ -1,7 +1,7 @@
 # Portable local LiteSVM validation
 
-This standalone locked workspace targets main after settlement PR #24, refund
-PR #25 and finance-client PR #27. This PR supplies their local runtime coverage.
+This standalone locked workspace validates merged settlement PR #24, refund
+PR #25 and finance-client PR #27. Runtime infrastructure PR #26 is merged.
 It does not link native program handlers, deploy or contact blockchain RPCs.
 
 ## Reproduction
@@ -87,3 +87,11 @@ The unchanged finance-client runtime dependency tree has known npm advisories.
 Review npm audit output separately; do not run automatic major-version upgrades
 inside this runtime-only PR. No copied client source, binary or test output
 belongs in the commit.
+
+## Automated validation
+
+The [backend workflow](../../docs/BACKEND_CI.md) installs official checksum-pinned
+platform-tools v1.57 and Solana CLI 4.1.2 on Linux, selects host Rust 1.98.1,
+builds keylessly and enforces the unchanged reviewed SBF hash before running all
+core and bridge suites. Missing or skipped runtime cases fail CI. Actual GitHub
+run results must be checked; local historical results are not GitHub CI evidence.
