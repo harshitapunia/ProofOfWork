@@ -1,0 +1,15 @@
+{
+  "name": "@proofwork/dependency-compatibility",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "test": "node --test rpc-compatibility.test.mjs browser-compatibility.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

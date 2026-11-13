@@ -15,5 +15,6 @@
     "test:blockhash:live": "npm run build && node dist/test/live-blockhash.js"
   },
   "dependencies": { "@solana/web3.js": "1.98.4" },
-  "devDependencies": { "@types/node": "24.0.0", "typescript": "5.7.3" }
+  "devDependencies": { "@types/node": "24.0.0", "typescript": "5.7.3" },
+  "overrides": { "@solana/web3.js@1.98.4": { "jayson": "5.0.0" } }
 }
