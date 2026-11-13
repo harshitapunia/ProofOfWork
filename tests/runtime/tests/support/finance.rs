@@ -8,10 +8,19 @@
 //! instructions. No vault, submission, milestone or completion state is injected.
 //!
 //! Unique placeholder signatures avoid history collisions without disabling
-//! replay/blockhash checks. They are not signatures or authentication coverage.
+//! blockhash checks. LiteSVM gates its duplicate-history precheck on sigverify,
+//! so financial fixtures prove program-level replay protection, not signed-history checks.
 //! Constructing a fixture creates LiteSVM's internal keypair; do not run without
 //! separate execution approval. Helpers are shared by independent test binaries.
 #![allow(dead_code)]
+
+fn bridge_role(name: &str) -> Result<String, std::env::VarError> {
+    if std::env::var("PROOFWORK_BRIDGE_ACTIVE").as_deref() == Ok("1") {
+        std::env::var(name)
+    } else {
+        Err(std::env::VarError::NotPresent)
+    }
+}
 
 use {
     super::{
@@ -95,7 +104,7 @@ fn public_role(tag: u8) -> Address {
 }
 
 /// Encodes Anchor's discriminator and the exact ordered metas/argument bytes from the compiled IDL.
-fn instruction(name: &str, metas: &[(Address, bool, bool)], args: &[u8]) -> Instruction {
+pub fn instruction(name: &str, metas: &[(Address, bool, bool)], args: &[u8]) -> Instruction {
     let mut data = Sha256::digest(format!("global:{name}").as_bytes())[..8].to_vec();
     data.extend_from_slice(args);
     Instruction {
@@ -127,11 +136,21 @@ impl Fixture {
             assert_eq!(account.owner, bpf_loader::ID);
             assert_eq!(format!("{:x}", Sha256::digest(&account.data)), hash);
         }
-        let sponsor = Address::new_from_array([11; 32]);
-        let student = public_role(22);
-        let verifier = public_role(33);
-        let caller = Address::new_from_array([44; 32]);
-        let sentinel = Address::new_from_array([77; 32]);
+        let sponsor = bridge_role("BRIDGE_SPONSOR")
+            .map(|v| v.parse::<Address>().unwrap())
+            .unwrap_or_else(|_| Address::new_from_array([11; 32]));
+        let student = bridge_role("BRIDGE_STUDENT")
+            .map(|v| v.parse::<Address>().unwrap())
+            .unwrap_or_else(|_| public_role(22));
+        let verifier = bridge_role("BRIDGE_VERIFIER")
+            .map(|v| v.parse::<Address>().unwrap())
+            .unwrap_or_else(|_| public_role(33));
+        let caller = bridge_role("BRIDGE_CALLER")
+            .map(|v| v.parse::<Address>().unwrap())
+            .unwrap_or_else(|_| Address::new_from_array([44; 32]));
+        let sentinel = bridge_role("BRIDGE_SENTINEL")
+            .map(|v| v.parse::<Address>().unwrap())
+            .unwrap_or_else(|_| Address::new_from_array([77; 32]));
         for role in [sponsor, student, verifier, caller, sentinel] {
             svm.set_account(
                 role,
@@ -235,34 +254,14 @@ impl Fixture {
     }
 
     /// Sends one actual VM transaction with a unique noncryptographic placeholder signature.
-    /// Blockhash/replay checks remain enabled; logs and compute/fees are printed for every step.
+    /// Blockhash checks remain enabled; signed-history coverage uses a separate test.
     pub fn execute(&mut self, payer: Address, ix: Instruction, label: &str) -> TransactionMetadata {
         let program = ix.program_id;
-        let message =
-            Message::new_with_blockhash(&[ix], Some(&payer), &self.svm.latest_blockhash());
-        assert_eq!(message.header.num_required_signatures, 1);
-        assert_eq!(message.account_keys[0], payer);
-        let mut tx = Transaction::new_unsigned(message);
-        let mut placeholder = [0; 64];
-        placeholder[..8].copy_from_slice(&self.nonce.to_le_bytes());
-        self.nonce = self.nonce.checked_add(1).unwrap();
-        tx.signatures[0] = placeholder.into();
-        let meta = self.svm.send_transaction(tx).unwrap_or_else(|e| {
-            panic!(
-                "{label}: {:?}; {} CUs\n{}",
-                e.err,
-                e.meta.compute_units_consumed,
-                e.meta.pretty_logs()
-            )
-        });
-        eprintln!(
-            "{label}: {} CUs; fee {} lamports\n{}",
-            meta.compute_units_consumed,
-            meta.fee,
-            meta.pretty_logs()
+        let meta = self.execute_many(payer, &[ix]);
+        assert!(
+            meta.logs.contains(&format!("Program {program} success")),
+            "{label}"
         );
-        assert!(meta.compute_units_consumed > 0);
-        assert!(meta.logs.contains(&format!("Program {program} success")));
         meta
     }
 
@@ -624,5 +623,274 @@ pub fn assert_token_cpis(meta: &TransactionMetadata, transfers: usize, closes: u
             .filter(|l| *l == &format!("Program {TOKEN} invoke [2]"))
             .count()
             >= transfers + closes
+    );
+}
+
+// Policy v2 isolated review helpers. None execute during cargo test --no-run.
+pub struct ExpectedFailure {
+    pub error: String,
+    pub meta: TransactionMetadata,
+}
+
+impl Fixture {
+    /// Runtime-only transaction dispatch. No snapshot restoration or native handler.
+    fn send_many(
+        &mut self,
+        payer: Address,
+        instructions: &[Instruction],
+    ) -> Result<TransactionMetadata, ExpectedFailure> {
+        let message =
+            Message::new_with_blockhash(instructions, Some(&payer), &self.svm.latest_blockhash());
+        assert_eq!(
+            message.header.num_required_signatures, 1,
+            "these fixtures require only the existing payer/base signer"
+        );
+        let mut tx = Transaction::new_unsigned(message);
+        let mut placeholder = [0; 64];
+        placeholder[..8].copy_from_slice(&self.nonce.to_le_bytes());
+        self.nonce = self.nonce.checked_add(1).unwrap();
+        tx.signatures[0] = placeholder.into();
+        self.svm
+            .send_transaction(tx)
+            .map_err(|failure| ExpectedFailure {
+                error: format!("{:?}", failure.err),
+                meta: failure.meta,
+            })
+    }
+
+    pub fn execute_many(
+        &mut self,
+        payer: Address,
+        instructions: &[Instruction],
+    ) -> TransactionMetadata {
+        self.send_many(payer, instructions)
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "unexpected failure: {}; {} CUs\n{}",
+                    failure.error,
+                    failure.meta.compute_units_consumed,
+                    failure.meta.pretty_logs()
+                )
+            })
+    }
+
+    pub fn reject_many(&mut self, payer: Address, instructions: &[Instruction]) -> ExpectedFailure {
+        match self.send_many(payer, instructions) {
+            Ok(meta) => panic!("expected transaction failure; logs: {}", meta.pretty_logs()),
+            Err(failure) => {
+                eprintln!(
+                    "EXPECTED FAILURE: {}; fee {}; CUs {}\n{}",
+                    failure.error,
+                    failure.meta.fee,
+                    failure.meta.compute_units_consumed,
+                    failure.meta.pretty_logs()
+                );
+                assert!(!failure.error.is_empty());
+                assert!(
+                    failure.meta.compute_units_consumed > 0,
+                    "must reach execution, not merely fail transaction sanitization"
+                );
+                failure
+            }
+        }
+    }
+
+    pub fn settlement_instruction(&self, s: &Scope, destination: Address) -> Instruction {
+        instruction(
+            "settle_milestone",
+            &[
+                (self.caller, true, true),
+                (self.internship, false, false),
+                (s.milestone, false, true),
+                (s.submission, false, false),
+                (s.completion, false, true),
+                (MINT, false, false),
+                (s.vault, false, true),
+                (s.authority, false, false),
+                (self.student_ata, false, true),
+                (destination, false, true),
+                (self.sponsor, false, true),
+                (TOKEN, false, false),
+                (system_program::ID, false, false),
+            ],
+            &[],
+        )
+    }
+
+    pub fn refund_instruction(&self, s: &Scope, destination: Address) -> Instruction {
+        instruction(
+            "refund_unclaimed_milestone",
+            &[
+                (self.sponsor, true, true),
+                (self.internship, false, false),
+                (s.milestone, false, true),
+                (MINT, false, false),
+                (s.vault, false, true),
+                (s.authority, false, false),
+                (destination, false, true),
+                (TOKEN, false, false),
+            ],
+            &[],
+        )
+    }
+
+    /// Real classic SPL SetAuthority. The new authority need not sign.
+    pub fn change_sponsor_ata_authority(&mut self) {
+        let mut data = vec![6, 2, 1]; // SetAuthority, AccountOwner, Some.
+        data.extend_from_slice(self.sentinel.as_ref());
+        self.execute(
+            self.sponsor,
+            Instruction {
+                program_id: TOKEN,
+                accounts: vec![
+                    AccountMeta::new(self.sponsor_ata, false),
+                    AccountMeta::new_readonly(self.sponsor, true),
+                ],
+                data,
+            },
+            "change sponsor ATA authority",
+        );
+        assert_eq!(
+            &self.account(self.sponsor_ata).data[32..64],
+            self.sentinel.as_ref()
+        );
+    }
+
+    /// Keyless destination creation using the existing caller as seeded System base.
+    /// Creation and InitializeAccount3 must execute in the same transaction.
+    pub fn provision_destination(
+        &self,
+        s: &Scope,
+        authority: Address,
+    ) -> (Address, Vec<Instruction>) {
+        let seed = format!("pow-v2-{}", s.id);
+        assert!(seed.len() <= 32);
+        let mut preimage = self.caller.as_ref().to_vec();
+        preimage.extend_from_slice(seed.as_bytes());
+        preimage.extend_from_slice(TOKEN.as_ref());
+        let destination = Address::new_from_array(Sha256::digest(preimage).into());
+        let mut create = 3u32.to_le_bytes().to_vec(); // System CreateAccountWithSeed
+        create.extend_from_slice(self.caller.as_ref());
+        create.extend_from_slice(&(seed.len() as u64).to_le_bytes());
+        create.extend_from_slice(seed.as_bytes());
+        create.extend_from_slice(
+            &self
+                .svm
+                .minimum_balance_for_rent_exemption(165)
+                .to_le_bytes(),
+        );
+        create.extend_from_slice(&165u64.to_le_bytes());
+        create.extend_from_slice(TOKEN.as_ref());
+        let create = Instruction {
+            program_id: system_program::ID,
+            accounts: vec![
+                AccountMeta::new(self.caller, true),
+                AccountMeta::new(destination, false),
+                AccountMeta::new_readonly(self.caller, true),
+            ],
+            data: create,
+        };
+        let mut data = vec![18];
+        data.extend_from_slice(authority.as_ref()); // InitializeAccount3
+        let init = Instruction {
+            program_id: TOKEN,
+            accounts: vec![
+                AccountMeta::new(destination, false),
+                AccountMeta::new_readonly(MINT, false),
+            ],
+            data,
+        };
+        (destination, vec![create, init])
+    }
+
+    pub fn system_transfer(&self, from: Address, to: Address, amount: u64) -> Instruction {
+        let mut data = 2u32.to_le_bytes().to_vec();
+        data.extend_from_slice(&amount.to_le_bytes());
+        Instruction {
+            program_id: system_program::ID,
+            accounts: vec![AccountMeta::new(from, true), AccountMeta::new(to, false)],
+            data,
+        }
+    }
+
+    /// Includes absent PDAs and the payer; only runtime fees may survive a failed transaction.
+    pub fn settlement_snapshot(
+        &self,
+        s: &Scope,
+        destination: Address,
+    ) -> Vec<(Address, Option<Account>)> {
+        let unrelated = self.scope(if s.id == 1 { 2 } else { 1 });
+        self.snapshot(&[
+            self.caller,
+            self.sponsor,
+            self.student_ata,
+            self.sponsor_ata,
+            destination,
+            self.internship,
+            s.milestone,
+            s.vault,
+            s.authority,
+            s.submission,
+            s.completion,
+            MINT,
+            self.sentinel,
+            unrelated.milestone,
+            unrelated.vault,
+            unrelated.authority,
+            unrelated.submission,
+            unrelated.completion,
+        ])
+    }
+
+    pub fn assert_rollback(&self, before: &[(Address, Option<Account>)], payer: Address, fee: u64) {
+        for (key, original) in before {
+            let mut expected = original.clone();
+            if *key == payer {
+                let a = expected.as_mut().expect("payer existed before execution");
+                a.lamports = a.lamports.checked_sub(fee).expect("fee covered");
+            }
+            assert_eq!(
+                self.svm.get_account(key),
+                expected,
+                "rollback failed for {key}"
+            );
+        }
+    }
+
+    /// Deliberately synthetic overflow prestate; does not represent mint-backed supply.
+    /// Used only to reach real Token CPI failure paths. Never restore after execution.
+    pub fn synthetic_token_overflow(&mut self, destination: Address) {
+        let mut a = self.account(destination);
+        a.data[64..72].copy_from_slice(&u64::MAX.to_le_bytes());
+        self.svm.set_account(destination, a).unwrap();
+    }
+
+    /// Deliberately synthetic lamport prestate to reach real CloseAccount overflow.
+    pub fn synthetic_close_overflow(&mut self) {
+        let mut a = self.account(self.sponsor);
+        a.lamports = u64::MAX;
+        self.svm.set_account(self.sponsor, a).unwrap();
+    }
+}
+
+pub fn require_transfer_stage_failure(failure: &ExpectedFailure, transfers: usize, closes: usize) {
+    assert_token_cpis(&failure.meta, transfers, closes);
+    let successes = failure
+        .meta
+        .logs
+        .iter()
+        .filter(|l| l.as_str() == format!("Program {TOKEN} success"))
+        .count();
+    assert!(
+        successes >= transfers + closes - 1,
+        "failure occurred before the required successful Token stages"
+    );
+    assert!(
+        failure
+            .meta
+            .logs
+            .iter()
+            .any(|l| l.contains(&format!("Program {TOKEN} failed"))),
+        "must fail inside real Token execution"
     );
 }

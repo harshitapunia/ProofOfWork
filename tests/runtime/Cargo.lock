@@ -1750,7 +1750,9 @@ name = "proof-of-work-runtime-tests"
 version = "0.1.0"
 dependencies = [
  "agave-feature-set",
+ "bincode",
  "litesvm",
+ "serde_json",
  "sha2 0.10.9",
  "solana-account",
  "solana-address 2.7.0",
@@ -1959,6 +1961,15 @@ checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde-big-array"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11fc7cc2c76d73e0f27ee52abbd64eec84d46f370c88371120433196934e4b7f"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -2641,6 +2652,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8e7db78c122d02189619490b1fef04a2a042c389662920617c0e6381fdf8fdd"
 dependencies = [
  "num-traits",
+ "serde",
+ "serde_derive",
  "solana-program-error",
 ]
 
@@ -2748,6 +2761,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef4b58f6d685adebefc945f28cf051cf3c11e295233e6dd3adfc0a71c3c6fb76"
 dependencies = [
  "blake3",
+ "serde",
+ "serde_derive",
  "solana-address 2.7.0",
  "solana-hash",
  "solana-instruction 3.5.1",
@@ -3104,6 +3119,8 @@ checksum = "fe45ce95700ac8045e422344b88e273843d70185873cc1cc880ba06dd9fa9002"
 dependencies = [
  "five8",
  "serde",
+ "serde-big-array",
+ "serde_derive",
  "solana-ed25519",
  "solana-sanitize",
  "wincode",
@@ -3376,6 +3393,8 @@ version = "4.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "444a979f617ef7ed4e01aa228800df52d0af55f533e1840e8d48d468e607885f"
 dependencies = [
+ "serde",
+ "serde_derive",
  "solana-address 2.7.0",
  "solana-hash",
  "solana-instruction 3.5.1",
@@ -3414,6 +3433,8 @@ version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a37cf28c58b03878d38c38411f0414d3a99a9e3b7e5ebb0f83f3317b2796d18"
 dependencies = [
+ "serde",
+ "serde_derive",
  "solana-instruction-error",
  "solana-sanitize",
 ]

@@ -1,7 +1,7 @@
 //! Wire-level helpers for the reviewed SBF artifact; no native ProofOfWork handler is linked.
 //!
 //! Calling the VM helper creates LiteSVM's internal ephemeral airdrop keypair.
-//! Compilation is permitted, but calling that helper requires separate approval.
+//! Execute only as an authorized local test; no persistent wallet is created.
 
 pub mod finance;
 
@@ -21,8 +21,8 @@ use {
 /// Approved identity from the program's declare_id! and the compiled combined IDL.
 pub const PROGRAM_ID: Address = address!("J2FkqDuuuHT14gxjVMhSryrX3Bs4Knct45NMLA79dGdZ");
 
-/// Exact SHA-256 of the existing platform-tools v1.57 SBPF v3 build.
-const PROGRAM_ELF_SHA256: &str = "86b4b44a3befa9fb736c81a90ee780829f1fdbd17f3f6fb4cc1c693755b23dfe";
+/// Reviewed Policy v2 build; see tests/runtime/artifact-provenance.json.
+const PROGRAM_ELF_SHA256: &str = "1711e2dbbd2f0129f34be5d70e3e48867c42a849b2beea7d36cfbddaf2ed64e1";
 
 /// Compiled IDL discriminator for global:create_internship, followed by its u64 argument.
 const CREATE_INTERNSHIP_DISCRIMINATOR: [u8; 8] = [27, 117, 48, 0, 70, 215, 145, 229];
@@ -58,9 +58,10 @@ pub fn verified_program_elf() -> Vec<u8> {
 /// Starts with LiteSVM 0.18.2's bundled mainnet feature snapshot, then explicitly
 /// disables p-token substitution before loading programs. This is a local Agave
 /// 4.3 profile, not a claim of matching current Devnet or the intended 4.1 runtime.
-/// Signature verification alone is disabled; blockhash checks, history/replay
-/// handling, rent, account privileges, ELF verification and CPI checks stay enabled.
-/// The constructor generates an internal keypair even though airdrop is never used.
+/// Financial fixtures disable signature verification; blockhash, rent, privilege,
+/// ELF and CPI checks remain enabled. LiteSVM gates duplicate-history rejection
+/// on sigverify; a separate internal-airdrop test enables it for signed replay.
+/// The constructor generates an internal keypair; signed-history coverage uses local airdrop.
 pub fn svm_with_placeholder_signatures() -> LiteSVM {
     let mut features = LiteSVM::mainnet_feature_set();
     assert!(features.is_active(&enable_sbpf_v3_deployment_and_execution::ID));

@@ -72,3 +72,70 @@ fn funded_milestone_refunds_principal_surplus_and_vault_rent() {
 fn assigned_milestone_refunds_principal_surplus_and_vault_rent() {
     refund_from_state(true);
 }
+
+#[test]
+fn refund_boundaries_and_canonical_destination_remain_enforced() {
+    for kind in 0..3 {
+        let mut f = Fixture::new();
+        let target = f.scope(1);
+        f.create_and_fund(&target);
+        let destination = if kind == 1 {
+            let (destination, ixs) = f.provision_destination(&target, f.sponsor);
+            f.execute_many(f.caller, &ixs);
+            destination
+        } else {
+            f.sponsor_ata
+        };
+        if kind == 2 {
+            f.assign(&target);
+            f.submit_and_attest(&target);
+        }
+        f.set_time(if kind == 0 { SUBMIT_BY - 1 } else { SUBMIT_BY });
+        let before = f.settlement_snapshot(&target, destination);
+        let ix = f.refund_instruction(&target, destination);
+        let failure = f.reject_many(f.sponsor, &[ix]);
+        assert_token_cpis(&failure.meta, 0, 0);
+        f.assert_rollback(&before, f.sponsor, failure.meta.fee);
+    }
+}
+
+#[test]
+fn refund_replay_does_not_pay_twice() {
+    let mut f = Fixture::new();
+    let target = f.scope(1);
+    f.create_and_fund(&target);
+    f.set_time(SUBMIT_BY);
+    f.refund(&target);
+    let before = f.settlement_snapshot(&target, f.sponsor_ata);
+    let ix = f.refund_instruction(&target, f.sponsor_ata);
+    let failure = f.reject_many(f.sponsor, &[ix]);
+    assert_token_cpis(&failure.meta, 0, 0);
+    f.assert_rollback(&before, f.sponsor, failure.meta.fee);
+    assert!(f.svm.get_account(&target.completion).is_none());
+}
+
+#[test]
+fn unauthorized_refund_and_cross_milestone_vault_are_rejected() {
+    for unauthorized in [true, false] {
+        let mut f = Fixture::new();
+        let target = f.scope(1);
+        let other = f.scope(2);
+        f.create_and_fund(&target);
+        f.create_and_fund(&other);
+        f.set_time(SUBMIT_BY);
+        let before = f.settlement_snapshot(&target, f.sponsor_ata);
+        let other_before = f.snapshot(&[other.milestone, other.vault]);
+        let mut ix = f.refund_instruction(&target, f.sponsor_ata);
+        let payer = if unauthorized {
+            ix.accounts[0].pubkey = f.caller;
+            f.caller
+        } else {
+            ix.accounts[4].pubkey = other.vault;
+            f.sponsor
+        };
+        let failure = f.reject_many(payer, &[ix]);
+        assert_token_cpis(&failure.meta, 0, 0);
+        f.assert_rollback(&before, payer, failure.meta.fee);
+        f.assert_unchanged(&other_before);
+    }
+}
