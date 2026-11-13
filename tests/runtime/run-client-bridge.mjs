@@ -17,6 +17,7 @@ for (const key of Object.keys(env)) {
 env.PROOFWORK_SBF_PATH ??= path.join(
   root, "target/keyless-sbf/sbpfv3-solana-solana/release/proof_of_work.so"
 );
+env.PROOFWORK_SBF_PATH = path.resolve(env.PROOFWORK_SBF_PATH);
 const reviewed = JSON.parse(readFileSync(path.join(root, "tests/runtime/artifact-provenance.json"), "utf8"));
 const artifactHash = createHash("sha256").update(readFileSync(env.PROOFWORK_SBF_PATH)).digest("hex");
 if (artifactHash !== reviewed.sha256) throw new Error("SBF artifact provenance mismatch");
