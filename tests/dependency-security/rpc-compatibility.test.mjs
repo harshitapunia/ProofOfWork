@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { readFileSync } from "node:fs";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const rpc = "https://api.devnet.solana.com"; // Injected fetch only; no network.
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -13,7 +14,14 @@ for (const directory of ["packages/finance-client", "services/verifier"]) {
   test(directory + ": pinned SDK and scoped remediation", () => {
     assert.equal(require("@solana/web3.js/package.json").version, "1.98.4");
     assert.equal(require("jayson/package.json").version, "5.0.0");
-    assert.throws(() => require.resolve("stream-json"), { code: "MODULE_NOT_FOUND" });
+    const selectedJayson = require("jayson/package.json");
+    assert.equal(Object.hasOwn(selectedJayson.dependencies, "stream-json"), false);
+    assert.equal(Object.hasOwn(selectedJayson.dependencies, "uuid"), false);
+    const lock = JSON.parse(readFileSync(path.join(root, directory, "package-lock.json"), "utf8"));
+    assert.equal(lock.packages["node_modules/jayson"].version, "5.0.0");
+    assert.ok(!Object.keys(lock.packages).some(name => name.endsWith("node_modules/stream-json")));
+    assert.ok(!Object.entries(lock.packages).some(([name, entry]) =>
+      name.endsWith("node_modules/uuid") && entry.version === "8.3.2"));
   });
   test(directory + ": Connection methods, params and unique UUID request IDs", async () => {
     const calls = [];

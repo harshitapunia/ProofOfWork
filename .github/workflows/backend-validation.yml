@@ -1,0 +1,153 @@
+name: Backend validation
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: backend-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_BUILD_JOBS: '2'
+  NO_DNA: '1'
+defaults:
+  run:
+    shell: bash
+jobs:
+  finance:
+    name: Finance client
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.1'
+      - run: npm --prefix packages/finance-client ci --ignore-scripts
+      - run: npm --prefix packages/finance-client run check
+      - run: npm --prefix packages/finance-client run build
+      - run: npm --prefix packages/finance-client test
+  verifier:
+    name: Verifier (offline)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.1'
+      - run: npm --prefix services/verifier ci --ignore-scripts
+      - run: npm --prefix services/verifier run check
+      - run: npm --prefix services/verifier run build
+      - run: npm --prefix services/verifier test
+  node-security:
+    name: Node security and browser/RPC compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.1'
+      - name: Locked installs without lifecycle scripts
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix packages/finance-client ci --ignore-scripts
+          npm --prefix services/verifier ci --ignore-scripts
+          npm --prefix tests/dependency-security ci --ignore-scripts
+      - run: npm --prefix packages/finance-client run build
+      - run: npm --prefix tests/dependency-security test
+      - run: python3 .github/scripts/test-security-gates.py
+      - run: python3 .github/scripts/security-gates.py node
+      - name: Validate workflow syntax using verified actionlint
+        run: |
+          python3 .github/scripts/install-tools.py actionlint --directory "$RUNNER_TEMP/reviewed-tools"
+          "$RUNNER_TEMP/reviewed-tools/actionlint/actionlint" .github/workflows/backend-validation.yml
+      - name: Preserve advisory reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: node-security-reports
+          retention-days: 14
+          if-no-files-found: warn
+          path: target/ci-security/*.json
+  rust:
+    name: Native Rust and advisory policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+      - run: cargo fmt --all --check
+      - run: cargo fmt --manifest-path tests/runtime/Cargo.toml --check
+      - run: cargo check --workspace --all-targets --locked
+      - run: cargo test --workspace --locked
+      - name: Scan both Rust locks with pinned cargo-audit
+        run: |
+          python3 .github/scripts/install-tools.py cargo-audit --directory "$RUNNER_TEMP/reviewed-tools"
+          python3 .github/scripts/security-gates.py rust --audit "$RUNNER_TEMP/reviewed-tools/cargo-audit/cargo-audit-x86_64-unknown-linux-gnu-v0.23.0/cargo-audit"
+      - name: Preserve advisory reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rust-security-reports
+          retention-days: 14
+          if-no-files-found: warn
+          path: target/ci-security/*.json
+  abi:
+    name: Compiled Rust/TypeScript ABI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.1'
+      - run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+      - run: npm --prefix packages/finance-client ci --ignore-scripts
+      - run: npm --prefix packages/finance-client run test:rust-abi
+      - run: npm --prefix packages/finance-client run test:settlement-abi
+  runtime:
+    name: Keyless SBF and all LiteSVM tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.1'
+      - run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+      - name: Verify official SBF and Solana CLI archives
+        run: python3 .github/scripts/install-tools.py platform-tools solana --directory "$RUNNER_TEMP/reviewed-tools"
+      - name: Build from source and enforce the unchanged SBF pin
+        run: python3 tests/runtime/build-sbf.py --platform-tools "$RUNNER_TEMP/reviewed-tools/platform-tools"
+      - name: Execute all core and actual-client runtime tests
+        run: |
+          node tests/runtime/run-client-bridge.mjs 2>&1 | tee runtime-test.log
+          python3 .github/scripts/check-runtime-results.py runtime-test.log
+      - name: Preserve public provenance and test outcomes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: runtime-provenance
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            target/keyless-sbf/provenance.json
+            target/client-bridge/run-*/provenance.json
+            target/client-bridge/run-*/result.json
+            runtime-test.log

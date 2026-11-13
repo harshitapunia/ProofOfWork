@@ -69,11 +69,17 @@ browser VM, not a claim of real-browser or wallet-adapter end-to-end validation.
 Overrides apply when each private package is the npm installation root. npm does
 not propagate dependency-owned overrides to a consuming application's root.
 A future frontend/workspace root must explicitly preserve and audit the chosen
-resolution. The repository-root unlocked Node manifest is outside this correction;
-these results do not certify its dependency tree or any future frontend tree.
+resolution. The repository-root tooling now has a separate lockfile and visible, expiring
+security exceptions in the backend CI policy; it is not certified clean by these
+package audits. See ../../docs/BACKEND_CI.md. Future frontend trees need their
+own dependency review.
 
 Both locked application packages and this test workspace audited with zero
 findings during review. Audit results are time-specific, not a security guarantee.
 Keep the override exact and scoped, re-review it when upgrading Web3, and prefer
 a compatible upstream fix once available. No Rust, ABI, public API, token policy,
 program identity, signing activation or external transaction behavior changes.
+
+The selected-package lockfile assertions deliberately tolerate separately audited
+ancestor tooling dependencies. They still reject stream-json in either selected
+package lock and reject the vulnerable UUID 8.3.2 descendant.

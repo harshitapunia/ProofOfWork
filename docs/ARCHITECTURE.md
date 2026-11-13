@@ -1,20 +1,60 @@
-# Draft shared contract specification
+# Backend architecture and trust boundaries
 
-Palak and Harshita must approve account fields, PDA seeds, instruction signatures, and state transitions before implementation. The components and transitions below are proposals.
+The [approved contract specification](CONTRACT_SPEC.md), with Settlement
+Destination Policy v2, supersedes this document's historical draft. Account
+layouts, PDA seeds, signer sets and transitions remain unchanged.
 
-| Component | Proposed on-chain responsibilities |
-|---|---|
-| Internship | Identify the sponsoring organization authority and link its milestones. |
-| Milestone | Bind the internship, assigned student, approved requirements commitment, designated verifier, reward mint and amount, and lifecycle state. |
-| Escrow vault | Hold a single funded milestone's reward in a dedicated SPL token account owned by the approved token program. A milestone-specific PDA is the token account's transfer authority. |
-| Submission | Bind an assigned student's evidence commitment and submission version to the milestone. |
-| Verification | Record an authorized successful attestation bound to the milestone, submission version and digest, assigned student, and fixed requirements. |
-| Completion record | Record the settled milestone and student. Create it atomically with successful settlement and make it unique to the milestone. |
+## On-chain components
 
-Listings, applications, identities, private evidence, repository access, test logs, and verification execution belong off-chain. Only agreed references or commitments belong on-chain. Treat all submitted code as untrusted and isolate verifier execution from credentials. The verifier is trusted to evaluate the agreed checks and attest accurately. The program verifies the attestation's authority, bindings, and state. It cannot independently establish work quality or employment history.
+| Component | Implemented responsibility |
+| --- | --- |
+| Internship | Immutable sponsor and sponsor-scoped ID |
+| Milestone | Terms, roles, commitment, deadlines, escrow bindings and lifecycle |
+| Submission | One immutable student evidence commitment |
+| Vault/authority | Dedicated classic SPL escrow and milestone-specific PDA signer |
+| CompletionRecord | Immutable settlement provenance, created atomically with payment |
 
-Proposed flow is funding and assignment, submission, successful verification, then settlement. Fix requirements before funded work begins. Settlement can be triggered under agreed program rules after successful verification without an additional organization signature. A submission or sponsor silence alone cannot release funds. Manual review, disputes, and any time-based rules require explicit approval. There is no automatic payout on timeout.
+There is no separate Verification account. The designated verifier transitions
+Submitted to Verified for exact stored bindings. The eight instructions cover
+creation, funding, assignment, submission, attestation, settlement and eligible
+unclaimed refund. Settled/Refunded are mutually exclusive terminal states.
 
-Validate the internship and milestone PDA relationships, program ownership of application accounts, and approved token-program ownership of token accounts. Check the vault address, mint, token program, transfer authority, and reward amount. Bind the recipient token account to the assigned student and reward mint. Use checked arithmetic. Disallow unrelated vault access, repeat settlement, and unauthorized refunds. Settlement and refund must be mutually exclusive terminal outcomes with token movement and state changes in the same atomic transaction.
+Settlement pays exactly the reward to the student's canonical classic ATA,
+returns surplus to a validated sponsor-owned classic token account and vault
+rent to the sponsor, then records completion atomically. The canonical sponsor
+ATA is preferred but not mandatory for settlement. Funding/refunds continue to
+require the canonical sponsor ATA. No caller gains payout authority.
 
-Team approval is required for field types and layouts, seed encodings, instruction and signer sets, funding and assignment ordering, supported token program and mint, verifier rotation, resubmission and replay rules, review and dispute handling, refund eligibility and destinations, vault closure, and completion or reputation semantics.
+## Off-chain components
+
+The finance client provides unsigned creation/funding/settlement builders,
+canonical derivations and validated atomic sponsor-destination fallback.
+Assignment/submission/refund production client coverage and general lifecycle
+queries remain integration work; the internal attestation builder already exists.
+
+The verifier authenticates GitHub numeric identities, pins PR/commit/blob
+evidence, validates domain-separated commitments and checks submitted chain
+state before and after restricted acceptance execution. Docker workers receive
+no signing credentials or network access. A future signer must consume only
+authenticated authorization and exact approved message bytes, never client
+approval JSON.
+
+Process-local single-use tickets and transaction policy, a test-only execution
+workflow, read-only RPC helpers and an offline recovery classifier are
+implemented. They are not durable operational signing or recovery. No production
+HTTP route activates them. Persistent uniqueness, worker fencing, custody,
+restart reconciliation and authenticated application orchestration remain open.
+
+## Validation and limits
+
+[CI](BACKEND_CI.md) separates Node, dependency, native Rust, compiled ABI and
+keyless SBF/LiteSVM validation. The runtime bridge executes actual client wire
+bytes; two cases are preflight-only and fixture setup has documented limits.
+It does not prove Devnet feature parity or complete application readiness.
+
+The chain trusts its designated verifier, while GitHub provenance and acceptance
+quality remain off-chain. Passing finite tests does not prove authorship or
+universal correctness. Sponsor vetting, consent, listings, applications, private
+evidence and credential operations belong off-chain. Timely unverified work
+can remain locked under the approved MVP. New recovery/dispute instructions,
+verifier rotation or ABI changes require explicit design review.

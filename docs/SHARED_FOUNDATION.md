@@ -1,23 +1,38 @@
 # Shared Rust foundation
 
-The [approved contract specification](CONTRACT_SPEC.md) defines the ABI and permitted transitions. Finance and verification live inside the single `proof_of_work` Anchor crate.
+The [approved specification](CONTRACT_SPEC.md), including its v2 settlement
+amendment, defines the stable ABI, six PDA derivations and allowed transitions.
 
-| Module | Contents and consumers |
-|---|---|
-| `crate::state` | Both teams use `Internship`, `Milestone`, `Submission`, `CompletionRecord`, and `MilestoneStatus`. The account types expose total `SPACE` for allocation. |
-| `crate::seeds` | Both teams import the approved prefixes and seed component helpers. Use `encode_id` for eight-byte little-endian IDs. The helpers return seeds before the canonical bump and do not derive addresses. |
-| `crate::errors::ProofOfWorkError` | Both teams use shared Anchor errors. The approved variant order maps to codes 6000 through 6010. |
-| `crate::instructions::finance` | Palak implements internship and milestone creation, funding, settlement, and refunds. Finance also owns escrow and token-transfer helpers, completion record creation, financial security tests, and the finance TypeScript client. |
-| `crate::instructions::verification` | Harshita implements student assignment, submission, and attestation. Verification also owns the external GitHub verifier, verification authorization and replay protection, verification security tests, the student and verification TypeScript client, and end-to-end integration. |
+The single proof_of_work Anchor crate contains all eight business entry points.
+Shared modules are state (Internship, Milestone, Submission, CompletionRecord,
+MilestoneStatus), seeds, errors and instruction namespaces. Their checked
+serialization/ownership fixtures remain authoritative. Error variants preserve
+the approved ordering, 6000 through 6010.
 
-Both teams use the same `MilestoneStatus`. Finance owns the creation and funding steps, settlement from `Verified`, and the approved unclaimed refund paths from `Funded` or `Assigned`. Verification owns assignment, submission, and the transition from `Submitted` to `Verified`. Handlers must enforce the approved role, state, timing, and account constraints. Sharing the enum does not itself enforce those constraints.
+Harshita owns creation/funding and verification; Palak owns settlement/refunds
+and completion. The [current workflow](TEAM_WORKFLOW.md) supersedes older
+all-finance assignments. Joint review is required for layouts, seed encodings,
+instruction interfaces, state transitions and shared helper interfaces.
 
-Keep `lib.rs`, `state/`, `seeds.rs`, `errors.rs`, and the shared `instructions/mod.rs` stable during parallel implementation. Coordinate public instruction contexts, vault CPI interfaces, and any ABI or fixture changes through joint review. Keep handler files within the appropriate team namespace. Ganga owns `apps/web/` and integrates against reviewed interfaces.
+## Devnet identities and build boundary
 
-The four state types use Anchor's `#[account]` macro. Their allocation constants include the eight-byte discriminator. ABI fixtures verify exact payload bytes, full account size, the discriminator, and program ownership.
+The configured public program ID is
+J2FkqDuuuHT14gxjVMhSryrX3Bs4Knct45NMLA79dGdZ. The approved classic DEMO mint
+and authority information are recorded in TEAM_APPROVAL.md and config.rs.
+Their presence in source is not evidence of deployment or live mint validation.
+Deployment/upgrade authority arrangements and any deployment require separate
+authorization. Never expose or generate deployment keys for validation.
 
-## Devnet program identity
+Host Rust/Cargo is pinned to 1.98.1. The reproducible SBF build uses the
+independently verified v1.57 platform-tools compiler and Solana CLI 4.1.2,
+without Anchor/cargo-build-sbf wrapper postprocessing. The reviewed artifact
+SHA-256 remains:
+1711e2dbbd2f0129f34be5d70e3e48867c42a849b2beea7d36cfbddaf2ed64e1
 
-The public ProofOfWork program ID is `J2FkqDuuuHT14gxjVMhSryrX3Bs4Knct45NMLA79dGdZ`. It is configured in `Anchor.toml` under `[programs.devnet]` and in `programs/proof_of_work/src/lib.rs` via `declare_id!`. Collaborators use this public ID for clients and PDA derivation. The same seeds and a different program ID produce different PDA addresses. Keep the program keypair private. Collaborators do not need it for the host-side Rust checks.
+[Runtime instructions](../tests/runtime/README.md) and [CI policy](BACKEND_CI.md)
+explain reproduction, official tool digests and provenance. Compiler/hash drift
+must fail review; CI does not repin artifacts automatically. Native tests alone
+do not establish transaction atomicity; SBF tests exercise actual CPIs/rollback.
 
-The Anchor entry point has no business instruction handlers. A local `anchor build --tools-version v1.57 --arch v3` checks the program scaffold only. Anchor's normal build expects a matching local program keypair in its ignored build directory and can create a new identity if it is missing. Coordinate build and deployment identity with Harshita before invoking that build on another machine. The program has not been deployed. Business instructions, on-chain integration tests, the DEMO mint, deployment and upgrade authority configuration, and separately authorized deployment are pending.
+Operational signing, durable orchestration, application APIs and frontend remain
+separate integration work. No deployment is performed by the validation workflow.

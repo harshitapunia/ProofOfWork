@@ -1,68 +1,47 @@
 # ProofOfWork finance client
 
-Existing creation/funding exports remain unchanged. Settlement Destination Policy
-v2 is approved and implemented by merged PR #24; this unsigned client is a separate
-integration candidate. This package never receives keys, signs, sends, deploys or
-creates wallets.
+Merged creation, funding and Settlement Destination Policy v2 support remains
+unsigned: this package does not handle private keys, sign, send, deploy or
+generate wallets.
 
-## Settlement API
+## Exports and settlement
 
-- settleMilestoneInstruction serializes the no-argument settlement ABI. Inputs are
-  caller, sponsor, assigned student, internshipId/milestoneId (bigint), and optional
-  sponsorDestination. Without an explicit destination it uses the sponsor ATA.
-  This pure serializer cannot authenticate account state; the program validates it.
-- deriveSubmission, deriveCompletion and deriveStudentAta expose canonical addresses.
-- deriveSponsorFallbackDestination derives a System seeded address from the caller,
-  an explicit public ASCII seed (1-32 letters/digits/underscore/hyphen), and classic
-  Token Program. It is not a ProofOfWork PDA or newly generated signing identity.
-- prepareSettlementTransaction(input, rpc) checks the existing approved Devnet RPC
-  endpoint/genesis, reads account state in one batch, and returns:
-  transaction, sponsorDestination and destinationKind. The caller is the unsigned
-  transaction's fee payer and only required signing identity.
+Creation/funding builders and canonical internship, milestone, vault and authority
+derivations remain available. Settlement adds settleMilestoneInstruction,
+deriveSubmission, deriveCompletion, deriveStudentAta,
+deriveSponsorFallbackDestination and prepareSettlementTransaction.
 
-The reader validates program ownership, sizes/discriminators, canonical PDAs and
-stored bumps, parent/sponsor/student/submission bindings, Verified status and
-attestation/submission timing, mint and token custody, sufficient reward backing,
-and the canonical student destination. A completion collision fails closed.
+The preparation API validates approved Devnet endpoint/genesis, program account
+ownership/layouts, PDAs and stored bindings, Verified state, timing, mint/vault
+custody/backing, student canonical destination and completion collisions.
 
-## Destination selection and provisioning
+It prefers a healthy canonical sponsor ATA, otherwise an explicit initialized
+sponsor-owned classic token account, or a public caller-scoped seeded fallback.
+An absent destination is created and initialized with sponsor authority in the
+same transaction as settlement. A prefunded System-owned zero-data address is
+topped up if necessary and allocated/initialized atomically. Foreign, executable,
+occupied or unsuitable destinations fail closed. Never split these instructions.
 
-A valid canonical sponsor ATA is preferred, even if an alternative is supplied.
-If unusable, an explicit initialized sponsor-owned classic token destination can
-be supplied. Otherwise fallbackSeed is required and the derived address is read.
+The application must durably reserve IDs/fallback seeds, supply a fresh verified
+Devnet blockhash, retain the complete transaction and obtain the caller's signature.
+On-chain checks remain authoritative. Stale observations or concurrent address
+use require refresh/re-preparation, not blind replacement of signed bytes.
 
-- Absent address: CreateAccountWithSeed, InitializeAccount3, settlement.
-- Prefunded zero-data, non-executable System-owned address: optional rent top-up,
-  AllocateWithSeed (which allocates and assigns), InitializeAccount3, settlement.
-- Initialized token accounts, foreign-owned/executable accounts or existing data
-  at the fallback address are rejected. Choose a new seed; never overwrite them.
+Funding and refund contracts retain canonical sponsor ATA policies. A reusable
+refund builder and assignment/submission production clients remain integration
+work. The verifier already contains an internal attestation builder.
 
-InitializeAccount3 assigns token authority to the recorded sponsor, never caller.
-Every instruction must remain in the returned transaction. Splitting provisioning
-and initialization permits account takeover and splitting settlement loses the
-intended transaction atomicity. The destination is exposed for surplus discovery.
-No sponsor signature is required for provisioning.
+## Dependency and validation boundary
 
-Seeds are caller-scoped public reservations. Reserve them in application storage.
-Concurrent preparations with the same seed are deterministic, not a distributed
-lease; if another transaction initializes it, the stale plan fails atomically.
-RPC observations can become stale, including new prefunding after preparation.
-Refresh and re-prepare after failure; never sign an altered replacement blindly.
+Use this package's npm ci --ignore-scripts. Web3 stays pinned to 1.98.4 with an
+exact scoped Jayson 5.0.0 override, outside Web3's declared upstream range.
+[Compatibility tests](../../tests/dependency-security/README.md) cover the used
+RPC/ID behavior, Web Crypto and simulated browser bundles. Consuming application
+roots must preserve and audit the resolution; overrides do not propagate.
 
-The transaction deliberately has no recentBlockhash or signature. The application
-must supply a fresh verified Devnet blockhash and pass the complete transaction to
-the existing caller wallet. Do not substitute the fee payer or add unreviewed
-instructions. This client is not a security boundary; on-chain checks still decide.
-
-## Validation limits
-
-Unit tests use mocked read-only RPC and compiled Rust ABI fixtures. Separate
-local evidence records 26 client/runtime tests, including exact TypeScript wire
-execution with signature verification, changed ATA authority, absent and prefunded
-destinations, rollback and replay. Two cases are preflight-only rejections.
-The portable harness lives in tests/runtime after that separate PR integrates.
-These local VM tests do not establish Devnet parity or deployment readiness.
-
-Run check, test, test:rust-abi and test:settlement-abi with pinned dependencies.
-The cross-language exporter uses a standalone temporary workspace and compares
-fixtures unless explicitly invoked with --write-fixture.
+Run check, build, test, test:rust-abi and test:settlement-abi. [Backend CI](../../docs/BACKEND_CI.md)
+runs independent compiled ABI and runtime jobs in addition to package tests.
+[Runtime infrastructure](../../tests/runtime/README.md) executes actual generated
+transactions with signature verification; two bridge cases are preflight-only.
+No simulated browser or local VM result establishes wallet-adapter parity,
+Devnet parity, deployment readiness or complete application automation.
