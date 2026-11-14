@@ -16,7 +16,7 @@ for await(const line of readline.createInterface({input:process.stdin})){
  try{
   const q=JSON.parse(line);
   if(q.op==="init"){console.log(JSON.stringify({ok:true,pub}));continue;}
-  let tx,selection=null;
+  let tx,selection=null,expectedSigner=pub.caller;
   if(q.op==="prepare"){
    const rpc={rpcEndpoint:client.SETTLEMENT_DEVNET_RPC,
     async getGenesisHash(){return client.SETTLEMENT_DEVNET_GENESIS;},
@@ -30,21 +30,35 @@ for await(const line of readline.createInterface({input:process.stdin})){
    tx=new Transaction().add(client.settleMilestoneInstruction({sponsor:pub.sponsor,student:pub.student,caller:pub.caller,
     internshipId:7n,milestoneId:1n,...q.input}));
    tx.feePayer=new PublicKey(pub.caller);
+  }else if(q.op==="lifecycle"){
+   const id=q.milestoneId??"1";
+   if(typeof id!=="string"||!/^(0|[1-9][0-9]*)$/.test(id))throw new Error("invalid test milestone ID");
+   const input={sponsor:pub.sponsor,internshipId:7n,milestoneId:BigInt(id),...q.input};
+   let built,role;
+   if(q.action==="assign"){
+    built=client.assignStudentInstruction({student:pub.student,...input});role=pub.sponsor;
+   }else if(q.action==="submit"){
+    built=client.submitMilestoneInstruction({student:pub.student,evidenceHash:"09".repeat(32),...input});role=pub.student;
+   }else if(q.action==="refund"){
+    built=client.refundUnclaimedMilestoneInstruction(input);role=pub.sponsor;
+   }else throw new Error("unknown lifecycle builder");
+   expectedSigner=q.payer??role;
+   tx=new Transaction().add(built);tx.feePayer=new PublicKey(expectedSigner);
   }else if(q.op==="fixture"){
    tx=new Transaction().add(...q.instructions.map(ix));tx.feePayer=new PublicKey(q.payer);
   }else throw new Error("unknown test operation");
   if(q.mutate){const last=tx.instructions.at(-1);last.keys[q.mutate.slot].pubkey=new PublicKey(q.mutate.address);}
-  if(q.lateFailure)tx.add(SystemProgram.transfer({fromPubkey:new PublicKey(pub.caller),toPubkey:new PublicKey(pub.sentinel),lamports:18446744073709551615n}));
+  if(q.lateFailure)tx.add(SystemProgram.transfer({fromPubkey:tx.feePayer,toPubkey:new PublicKey(pub.sentinel),lamports:18446744073709551615n}));
   tx.recentBlockhash=q.blockhash;
   const message=tx.serializeMessage(),required=tx.compileMessage().accountKeys.slice(0,tx.compileMessage().header.numRequiredSignatures);
-  if(q.op!=="fixture" && (required.length!==1||required[0].toBase58()!==pub.caller))throw new Error("unexpected signing identity");
+  if(q.op!=="fixture" && (required.length!==1||required[0].toBase58()!==expectedSigner))throw new Error("unexpected signing identity");
   if(!q.unsigned)for(const address of required){
    const secret=keys.get(q.wrongSignature?pub.sentinel:address.toBase58());
    if(!secret)throw new Error("unknown fixture signer");
    tx.addSignature(address,crypto.sign(null,message,secret));
   }
   const wire=tx.serialize({requireAllSignatures:!q.unsigned,verifySignatures:!q.unsigned&&!q.wrongSignature});
-  console.log(JSON.stringify({ok:true,origin:q.op,mutation:q.mutate??null,lateFailure:Boolean(q.lateFailure),selection,wireHex:wire.toString("hex"),wireSha256:crypto.createHash("sha256").update(wire).digest("hex"),
+  console.log(JSON.stringify({ok:true,origin:q.op,action:q.action??null,mutation:q.mutate??null,lateFailure:Boolean(q.lateFailure),selection,wireHex:wire.toString("hex"),wireSha256:crypto.createHash("sha256").update(wire).digest("hex"),
     size:wire.length,accountCount:tx.compileMessage().accountKeys.length,
     requiredSigners:required.map(k=>k.toBase58()),instructions:tx.instructions.map(i=>({programId:i.programId.toBase58(),
       dataHex:i.data.toString("hex"),keys:i.keys.map(k=>({pubkey:k.pubkey.toBase58(),isSigner:k.isSigner,isWritable:k.isWritable}))}))}));

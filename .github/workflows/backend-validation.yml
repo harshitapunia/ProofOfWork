@@ -125,6 +125,7 @@ jobs:
         run: cargo fetch --locked
       - run: npm --prefix packages/finance-client run test:rust-abi
       - run: npm --prefix packages/finance-client run test:settlement-abi
+      - run: npm --prefix packages/finance-client run test:lifecycle-abi
   runtime:
     name: Keyless SBF and all LiteSVM tests
     runs-on: ubuntu-24.04

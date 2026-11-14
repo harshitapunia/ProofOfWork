@@ -772,3 +772,566 @@ fn signed_unauthorized_verifier_attestation() {
         false,
     );
 }
+
+// Lifecycle tests below execute the production TypeScript builders. Internship,
+// mint/ATA setup, milestone creation/funding and optional assignment are trusted
+// fixtures; every operation named as the subject of a test comes from Node.
+fn lifecycle_setup(assigned: bool) -> (Worker, Fixture, Scope) {
+    let w = Worker::new();
+    let mut f = Fixture::new();
+    let s = f.scope(1);
+    f.create_and_fund(&s);
+    let other = f.scope(2);
+    f.create_and_fund(&other);
+    if assigned {
+        f.assign(&s);
+    }
+    signed(&mut f);
+    (w, f, s)
+}
+
+fn lifecycle_wire(w: &mut Worker, f: &Fixture, s: &Scope, action: &str, mut extra: Value) -> Value {
+    extra["op"] = json!("lifecycle");
+    extra["action"] = json!(action);
+    extra["milestoneId"] = json!(s.id.to_string());
+    extra["blockhash"] = json!(f.svm.latest_blockhash().to_string());
+    let wire = w.call(extra);
+    assert_eq!(
+        wire["ok"], true,
+        "production client rejected test request: {wire}"
+    );
+    assert_eq!(
+        wire["origin"], "lifecycle",
+        "must not reconstruct a Rust fixture instruction"
+    );
+    assert_eq!(wire["action"], action);
+    assert!(f.svm.get_sigverify());
+    wire
+}
+
+fn lifecycle_reject(
+    f: &mut Fixture,
+    wire: &Value,
+    s: &Scope,
+    payer: Address,
+    name: &str,
+    expected: Option<&str>,
+    signature_failure: bool,
+) -> litesvm::types::TransactionMetadata {
+    let mut before = f.settlement_snapshot(s, f.sponsor_ata);
+    before.extend(f.snapshot(&[f.student, f.verifier]));
+    let e = f
+        .svm
+        .send_transaction(decode(wire))
+        .expect_err("lifecycle attack must fail");
+    if signature_failure {
+        assert!(
+            format!("{:?}", e.err).contains("SignatureFailure"),
+            "{:?}",
+            e.err
+        );
+        assert_eq!(e.meta.compute_units_consumed, 0);
+    } else {
+        assert!(e.meta.compute_units_consumed > 0, "{:?}", e.err);
+        assert!(!format!("{:?}", e.err).contains("SignatureFailure"));
+    }
+    if let Some(reason) = expected {
+        assert!(
+            e.meta.logs.iter().any(|line| line.contains(reason)),
+            "{:?}\n{}",
+            e.err,
+            e.meta.pretty_logs()
+        );
+    }
+    f.assert_rollback(&before, payer, e.meta.fee);
+    record(
+        name,
+        json!({"result":"passed","origin":wire["origin"],"action":wire["action"],
+        "error":format!("{:?}",e.err),"sigverify":true,"fee":e.meta.fee,"logs":e.meta.logs}),
+    );
+    e.meta
+}
+
+#[test]
+fn lifecycle_assignment_and_submission_from_production_client() {
+    let (mut w, mut f, s) = lifecycle_setup(false);
+    let other = f.scope(2);
+    let unaffected = f.snapshot(&[
+        other.milestone,
+        other.vault,
+        f.internship,
+        MINT,
+        f.sponsor_ata,
+        f.student_ata,
+    ]);
+    let assignment = lifecycle_wire(&mut w, &f, &s, "assign", json!({}));
+    assert_eq!(
+        assignment["requiredSigners"],
+        json!([f.sponsor.to_string()])
+    );
+    send(&mut f, &assignment, "lifecycle-assignment");
+    f.assert_status(&s, ASSIGNED);
+    assert_eq!(&f.account(s.milestone).data[72..104], f.student.as_ref());
+    f.set_time(NOW + 10);
+    let submission = lifecycle_wire(&mut w, &f, &s, "submit", json!({}));
+    assert_eq!(
+        submission["requiredSigners"],
+        json!([f.student.to_string()])
+    );
+    let student_sol = f.account(f.student).lamports;
+    let meta = send(&mut f, &submission, "lifecycle-submission");
+    f.assert_status(&s, 3);
+    let account = f.program_account(s.submission, 113, SUBMISSION_DISC);
+    let mut expected = SUBMISSION_DISC.to_vec();
+    expected.extend_from_slice(s.milestone.as_ref());
+    expected.extend_from_slice(f.student.as_ref());
+    expected.extend_from_slice(&EVIDENCE);
+    expected.extend_from_slice(&(NOW + 10).to_le_bytes());
+    expected.push(s.submission_bump);
+    assert_eq!(account.data, expected);
+    assert_eq!(
+        f.account(f.student).lamports,
+        student_sol - account.lamports - meta.fee
+    );
+    f.assert_unchanged(&unaffected);
+    f.assert_conserved();
+}
+
+#[test]
+fn lifecycle_assignment_wrong_authority() {
+    let (mut w, mut f, s) = lifecycle_setup(false);
+    let payer = f.caller;
+    let v = lifecycle_wire(
+        &mut w,
+        &f,
+        &s,
+        "assign",
+        json!({"payer":payer.to_string(),"mutate":{"slot":0,"address":payer.to_string()}}),
+    );
+    lifecycle_reject(
+        &mut f,
+        &v,
+        &s,
+        payer,
+        "lifecycle-unauthorized-assignment",
+        Some("InvalidRole"),
+        false,
+    );
+}
+
+#[test]
+fn lifecycle_assignment_rejects_designated_verifier_as_student() {
+    let (mut w, mut f, s) = lifecycle_setup(false);
+    let payer = f.sponsor;
+    let v = lifecycle_wire(
+        &mut w,
+        &f,
+        &s,
+        "assign",
+        json!({"input":{"student":f.verifier.to_string()}}),
+    );
+    lifecycle_reject(
+        &mut f,
+        &v,
+        &s,
+        payer,
+        "lifecycle-invalid-student",
+        Some("InvalidRole"),
+        false,
+    );
+}
+
+#[test]
+fn lifecycle_assignment_replay_and_deadline() {
+    let (mut w, mut f, s) = lifecycle_setup(false);
+    let payer = f.sponsor;
+    let v = lifecycle_wire(&mut w, &f, &s, "assign", json!({}));
+    send(&mut f, &v, "lifecycle-first-assignment");
+    f.svm.expire_blockhash(); // Fresh wire tests the state gate, not history rejection.
+    let repeat = lifecycle_wire(&mut w, &f, &s, "assign", json!({}));
+    lifecycle_reject(
+        &mut f,
+        &repeat,
+        &s,
+        payer,
+        "lifecycle-repeat-assignment",
+        Some("InvalidState"),
+        false,
+    );
+    let other = f.scope(2);
+    f.set_time(ASSIGN_BY);
+    let late = lifecycle_wire(&mut w, &f, &other, "assign", json!({}));
+    lifecycle_reject(
+        &mut f,
+        &late,
+        &other,
+        payer,
+        "lifecycle-late-assignment",
+        Some("DeadlinePassed"),
+        false,
+    );
+}
+
+#[test]
+fn lifecycle_submission_wrong_student() {
+    let (mut w, mut f, s) = lifecycle_setup(true);
+    let payer = f.caller;
+    let v = lifecycle_wire(
+        &mut w,
+        &f,
+        &s,
+        "submit",
+        json!({"payer":payer.to_string(),"input":{"student":payer.to_string()}}),
+    );
+    lifecycle_reject(
+        &mut f,
+        &v,
+        &s,
+        payer,
+        "lifecycle-wrong-student",
+        Some("InvalidRole"),
+        false,
+    );
+    assert!(f.svm.get_account(&s.submission).is_none());
+}
+
+#[test]
+fn lifecycle_duplicate_submission() {
+    let (mut w, mut f, s) = lifecycle_setup(true);
+    let payer = f.student;
+    f.set_time(NOW + 10);
+    let v = lifecycle_wire(&mut w, &f, &s, "submit", json!({}));
+    send(&mut f, &v, "lifecycle-first-submission");
+    f.svm.expire_blockhash();
+    let repeat = lifecycle_wire(&mut w, &f, &s, "submit", json!({}));
+    lifecycle_reject(
+        &mut f,
+        &repeat,
+        &s,
+        payer,
+        "lifecycle-duplicate-submission",
+        None,
+        false,
+    );
+    f.assert_status(&s, 3);
+}
+
+#[test]
+fn lifecycle_submission_cutoff_rolls_back_initialization() {
+    let (mut w, mut f, s) = lifecycle_setup(true);
+    let payer = f.student;
+    f.set_time(SUBMIT_BY);
+    let v = lifecycle_wire(&mut w, &f, &s, "submit", json!({}));
+    lifecycle_reject(
+        &mut f,
+        &v,
+        &s,
+        payer,
+        "lifecycle-late-submission",
+        Some("DeadlinePassed"),
+        false,
+    );
+    assert!(f.svm.get_account(&s.submission).is_none());
+}
+
+#[test]
+fn lifecycle_submission_after_refund_rejects_terminal_state() {
+    let (mut w, mut f, s) = lifecycle_setup(true);
+    f.set_time(SUBMIT_BY);
+    let refund = lifecycle_wire(&mut w, &f, &s, "refund", json!({}));
+    send(&mut f, &refund, "lifecycle-refund-before-submission");
+    let payer = f.student;
+    let submit = lifecycle_wire(&mut w, &f, &s, "submit", json!({}));
+    lifecycle_reject(
+        &mut f,
+        &submit,
+        &s,
+        payer,
+        "lifecycle-submit-after-refund",
+        Some("InvalidState"),
+        false,
+    );
+    f.assert_status(&s, REFUNDED);
+    assert!(f.svm.get_account(&s.submission).is_none());
+}
+
+fn lifecycle_refund_success(assigned: bool, name: &str) {
+    let (mut w, mut f, s) = lifecycle_setup(assigned);
+    donate(&mut w, &mut f, &s); // Signed real SPL fixture donation.
+    f.set_time(SUBMIT_BY);
+    let before = f.token_amount(f.sponsor_ata);
+    let sponsor_sol = f.account(f.sponsor).lamports;
+    let rent = f.account(s.vault).lamports;
+    let other = f.scope(2);
+    let unaffected = f.snapshot(&[
+        other.milestone,
+        other.vault,
+        f.internship,
+        MINT,
+        f.student_ata,
+    ]);
+    let v = lifecycle_wire(&mut w, &f, &s, "refund", json!({}));
+    assert_eq!(v["requiredSigners"], json!([f.sponsor.to_string()]));
+    let meta = send(&mut f, &v, name);
+    assert_token_cpis(&meta, 1, 1);
+    assert_eq!(f.token_amount(f.sponsor_ata), before + REWARD + SURPLUS);
+    assert_eq!(f.account(f.sponsor).lamports, sponsor_sol + rent - meta.fee);
+    f.assert_status(&s, REFUNDED);
+    assert!(f.svm.get_account(&s.vault).is_none());
+    assert!(f.svm.get_account(&s.completion).is_none());
+    assert!(f.svm.get_account(&s.submission).is_none());
+    f.assert_unchanged(&unaffected);
+    f.assert_conserved();
+}
+
+#[test]
+fn lifecycle_funded_refund_returns_principal_surplus_and_rent() {
+    lifecycle_refund_success(false, "lifecycle-funded-refund");
+}
+#[test]
+fn lifecycle_assigned_refund_returns_principal_surplus_and_rent() {
+    lifecycle_refund_success(true, "lifecycle-assigned-refund");
+}
+
+#[test]
+fn lifecycle_refund_wrong_authority() {
+    let (mut w, mut f, s) = lifecycle_setup(false);
+    f.set_time(SUBMIT_BY);
+    let payer = f.caller;
+    let v = lifecycle_wire(
+        &mut w,
+        &f,
+        &s,
+        "refund",
+        json!({"payer":payer.to_string(),"mutate":{"slot":0,"address":payer.to_string()}}),
+    );
+    lifecycle_reject(
+        &mut f,
+        &v,
+        &s,
+        payer,
+        "lifecycle-unauthorized-refund",
+        Some("InvalidRole"),
+        false,
+    );
+}
+
+#[test]
+fn lifecycle_refund_before_cutoff() {
+    let (mut w, mut f, s) = lifecycle_setup(false);
+    f.set_time(SUBMIT_BY - 1);
+    let payer = f.sponsor;
+    let v = lifecycle_wire(&mut w, &f, &s, "refund", json!({}));
+    lifecycle_reject(
+        &mut f,
+        &v,
+        &s,
+        payer,
+        "lifecycle-early-refund",
+        Some("RefundTooEarly"),
+        false,
+    );
+}
+
+#[test]
+fn lifecycle_refund_after_submission() {
+    let (mut w, mut f, s) = lifecycle_setup(true);
+    f.set_time(NOW + 10);
+    let submit = lifecycle_wire(&mut w, &f, &s, "submit", json!({}));
+    send(&mut f, &submit, "lifecycle-submit-before-refund");
+    f.set_time(SUBMIT_BY);
+    let payer = f.sponsor;
+    let v = lifecycle_wire(&mut w, &f, &s, "refund", json!({}));
+    lifecycle_reject(
+        &mut f,
+        &v,
+        &s,
+        payer,
+        "lifecycle-refund-after-submission",
+        Some("InvalidState"),
+        false,
+    );
+}
+
+#[test]
+fn lifecycle_refund_noncanonical_sponsor_destination_is_rejected() {
+    let (mut w, mut f, s) = lifecycle_setup(false);
+    let owner = f.sponsor;
+    let destination = provision(&mut w, &mut f, owner);
+    let untouched = f.snapshot(&[destination]);
+    f.set_time(SUBMIT_BY);
+    let v = lifecycle_wire(
+        &mut w,
+        &f,
+        &s,
+        "refund",
+        json!({"mutate":{"slot":6,"address":destination.to_string()}}),
+    );
+    lifecycle_reject(
+        &mut f,
+        &v,
+        &s,
+        owner,
+        "lifecycle-noncanonical-refund",
+        Some("InvalidDestination"),
+        false,
+    );
+    f.assert_unchanged(&untouched);
+    f.assert_conserved();
+}
+
+#[test]
+fn lifecycle_refund_changed_canonical_authority_is_rejected() {
+    let (mut w, mut f, s) = lifecycle_setup(false);
+    changed(&mut w, &mut f);
+    f.set_time(SUBMIT_BY);
+    let payer = f.sponsor;
+    let v = lifecycle_wire(&mut w, &f, &s, "refund", json!({}));
+    let meta = lifecycle_reject(
+        &mut f,
+        &v,
+        &s,
+        payer,
+        "lifecycle-changed-refund-authority",
+        None,
+        false,
+    );
+    assert_token_cpis(&meta, 0, 0);
+    f.assert_status(&s, FUNDED);
+}
+
+#[test]
+fn lifecycle_refund_cross_milestone_vault_is_rejected() {
+    let (mut w, mut f, s) = lifecycle_setup(false);
+    f.set_time(SUBMIT_BY);
+    let payer = f.sponsor;
+    let v = lifecycle_wire(
+        &mut w,
+        &f,
+        &s,
+        "refund",
+        json!({"mutate":{"slot":4,"address":f.scope(2).vault.to_string()}}),
+    );
+    lifecycle_reject(
+        &mut f,
+        &v,
+        &s,
+        payer,
+        "lifecycle-cross-vault-refund",
+        Some("ConstraintSeeds"),
+        false,
+    );
+    f.assert_conserved();
+}
+
+#[test]
+fn lifecycle_refund_transfer_failure_rolls_back() {
+    let (mut w, mut f, s) = lifecycle_setup(false);
+    // Deliberately synthetic, unbacked u64::MAX destination reaches Token overflow.
+    let payer = f.sponsor;
+    let destination = f.sponsor_ata;
+    f.synthetic_token_overflow(destination);
+    f.set_time(SUBMIT_BY);
+    let v = lifecycle_wire(&mut w, &f, &s, "refund", json!({}));
+    let meta = lifecycle_reject(
+        &mut f,
+        &v,
+        &s,
+        payer,
+        "lifecycle-refund-transfer-rollback",
+        None,
+        false,
+    );
+    assert_token_cpis(&meta, 1, 0);
+    assert!(meta
+        .logs
+        .iter()
+        .any(|l| l.contains(&format!("Program {TOKEN} failed"))));
+    f.assert_status(&s, FUNDED);
+}
+
+#[test]
+fn lifecycle_refund_close_failure_rolls_back_transfer() {
+    let (mut w, mut f, s) = lifecycle_setup(false);
+    // Synthetic SOL overflow, not claimed economically reachable.
+    f.synthetic_close_overflow();
+    f.set_time(SUBMIT_BY);
+    let payer = f.sponsor;
+    let v = lifecycle_wire(&mut w, &f, &s, "refund", json!({}));
+    let meta = lifecycle_reject(
+        &mut f,
+        &v,
+        &s,
+        payer,
+        "lifecycle-refund-close-rollback",
+        None,
+        false,
+    );
+    assert_token_cpis(&meta, 1, 1);
+    assert!(meta
+        .logs
+        .iter()
+        .any(|l| l == &format!("Program {TOKEN} success")));
+    assert!(meta
+        .logs
+        .iter()
+        .any(|l| l.contains(&format!("Program {TOKEN} failed"))));
+    f.assert_status(&s, FUNDED);
+    f.assert_conserved();
+}
+
+#[test]
+fn lifecycle_refund_later_instruction_failure_is_atomic() {
+    let (mut w, mut f, s) = lifecycle_setup(false);
+    f.set_time(SUBMIT_BY);
+    let payer = f.sponsor;
+    let v = lifecycle_wire(&mut w, &f, &s, "refund", json!({"lateFailure":true}));
+    let meta = lifecycle_reject(
+        &mut f,
+        &v,
+        &s,
+        payer,
+        "lifecycle-refund-later-rollback",
+        None,
+        false,
+    );
+    assert_token_cpis(&meta, 1, 1);
+    assert!(meta
+        .logs
+        .iter()
+        .any(|l| l == &format!("Program {PROGRAM_ID} success")));
+    f.assert_status(&s, FUNDED);
+    f.assert_conserved();
+}
+
+#[test]
+fn lifecycle_all_builders_require_valid_cryptographic_signatures() {
+    for action in ["assign", "submit", "refund"] {
+        for wrong in [false, true] {
+            let (mut w, mut f, s) = lifecycle_setup(action == "submit");
+            if action == "refund" {
+                f.set_time(SUBMIT_BY);
+            }
+            let payer = if action == "submit" {
+                f.student
+            } else {
+                f.sponsor
+            };
+            let extra = if wrong {
+                json!({"wrongSignature":true})
+            } else {
+                json!({"unsigned":true})
+            };
+            let v = lifecycle_wire(&mut w, &f, &s, action, extra);
+            lifecycle_reject(
+                &mut f,
+                &v,
+                &s,
+                payer,
+                &format!("lifecycle-{action}-bad-signature-{wrong}"),
+                None,
+                true,
+            );
+        }
+    }
+}
