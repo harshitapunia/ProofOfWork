@@ -221,3 +221,63 @@ Random inputs and expected outputs stay internal; API outcomes contain only IDs 
 Existing manifests are never upgraded automatically. Policy changes require a new suite version.
 The opt-in `test:sandbox` command also exercises harmless v2 fixtures when the trusted image is configured.
 Finite randomized testing reduces simple hardcoding; it does not prove general correctness or stop every adversarial implementation.
+
+
+## Pinned Git tree source policy
+
+Identity and PR provenance checks remain mandatory before acceptance. Source
+retrieval independently rechecks the numeric repository identity and exact
+commit. The REST commit's tree SHA must agree with the Git data commit's tree;
+both commit responses must identify the requested immutable commit. All endpoints
+are constructed within the validated repository, never taken from response URLs
+or request-supplied tree metadata.
+
+The verifier requests that root tree once with recursive=1. It requires the exact
+tree SHA, explicit truncated=false, well-formed unique entries and valid Git
+type/mode pairs. Each ancestor of the requested nested path must be a directory
+tree (040000); the final entry must be a regular blob, 100644 or 100755.
+Executable regular files are accepted as source bytes under the same isolated
+Node invocation; Git executable permission grants no additional execution
+authority. Symlinks (120000), gitlinks/submodules (160000), directories,
+unsupported modes, absent paths and ambiguous/partial responses fail closed.
+Contents API type=file alone is never treated as regular-file evidence, including
+when GitHub dereferences a symlink.
+
+Contents retrieval remains pinned to the exact commit and exact manifest path.
+The tree-selected blob SHA, Contents SHA and locally calculated Git blob SHA-1
+must all agree; declared tree and Contents sizes must match the decoded bytes.
+Canonical base64, base64 encoding, nonempty source and the existing 131072-byte
+limit remain enforced. Source paths use the existing relative .mjs manifest
+grammar and 120-character bound; traversal, empty components, backslashes,
+URL syntax and encoded separators are rejected before networking.
+
+Source uses five bounded GETs: repository, REST commit, Git commit, recursive
+tree and Contents. Existing identity/PR validation is separate. Each response
+retains the 1000000-byte cap and 10-second timeout with redirects refused.
+Large/truncated trees are rejected rather than partially trusted or retried with
+weaker checks. This may reject otherwise valid files in very large repositories.
+There is no clone, archive extraction, arbitrary object URL fetch, branch HEAD
+fallback or authorization cache. New tree/metadata/blob failures use
+github_api_failure; existing identity, repository, commit, missing-commit and
+rate-limit classifications remain intact. Credentials are never included in
+failure results.
+
+This adapter trusts authenticated GitHub HTTPS/API responses to map a commit
+object to its tree; it does not independently reconstruct the complete signed
+Git commit or certify authorship. It retains the approved SHA-1 repository and
+evidence-commitment policy. Requirements/evidence schemas, manifest parsing,
+Docker isolation, acceptance policy, attestation and signing restrictions are
+unchanged. Deterministic mocked adversarial tests do not establish live GitHub,
+Docker, Devnet or complete-application readiness.
+
+API references: [Git commits](https://docs.github.com/en/rest/git/commits)
+and [Git trees](https://docs.github.com/en/rest/git/trees).
+
+The existing opt-in live GitHub adapter test now asserts all five source
+provenance requests instead of expecting only Contents. It passed read-only
+against the already documented public PR #10 fixture after this hardening,
+including the exact pinned tree/nested path/blob checks and the existing
+contributor, repository and non-head-commit rejections. Retrieved code was not
+executed. Adversarial tree/API failure cases remain deterministic mocks; this
+live result does not prove hostile-response handling, sandbox containment,
+private/fork enrollment, signing or complete application readiness.

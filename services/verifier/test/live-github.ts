@@ -50,7 +50,10 @@ async function live(): Promise<void> {
   assert.equal(String(object(pr.user).id), input.contributorId);
   assert.equal(String(object(object(pr.base).repo).id), input.repositoryId);
   assert.equal(object(pr.head).sha, input.commit);
-  assert.equal((await get(base + "/commits/" + input.commit)).sha, input.commit);
+  const commitMetadata = await get(base + "/commits/" + input.commit);
+  assert.equal(commitMetadata.sha, input.commit);
+  const treeSha = object(object(commitMetadata.commit).tree).sha;
+  assert.match(String(treeSha), /^[0-9a-f]{40}$/);
   console.log("PASS live identity, repository, PR author/target/head and commit accessibility");
 
   const github = new GitHub(request);
@@ -58,7 +61,8 @@ async function live(): Promise<void> {
   const before = requests.length;
   const source = await github.source(input, token, entry);
   const path = base + "/contents/" + entry + "?ref=" + input.commit;
-  assert.deepEqual(requests.slice(before), [path]);
+  assert.deepEqual(requests.slice(before), [base, base + "/commits/" + input.commit,
+    base + "/git/commits/" + input.commit, base + "/git/trees/" + treeSha + "?recursive=1", path]);
   const metadata = await get(path);
   const blob = createHash("sha1").update(Buffer.from("blob " + source.length + "\0"))
     .update(source).digest("hex");
