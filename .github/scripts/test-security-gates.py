@@ -89,7 +89,7 @@ class RuntimeCoverageTests(unittest.TestCase):
         return "".join("Running tests/" + name + ".rs (fixture)\n"
                        + "test result: ok. " + str(count)
                        + " passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"
-                       for name, count in [("atomicity_sbf", 6), ("client_bridge", 26),
+                       for name, count in [("atomicity_sbf", 6), ("client_bridge", 46),
                                            ("refund_sbf", 5), ("settlement_sbf", 11), ("smoke", 1)])
 
     def run_guard(self, text):
@@ -105,7 +105,7 @@ class RuntimeCoverageTests(unittest.TestCase):
 
     def test_ignored_filtered_or_failed_cases_rejected(self):
         for old, new in [("0 ignored", "1 ignored"), ("0 filtered out", "1 filtered out"),
-                         ("0 failed", "1 failed"), ("26 passed", "25 passed")]:
+                         ("0 failed", "1 failed"), ("46 passed", "45 passed")]:
             with self.subTest(new=new):
                 self.assertNotEqual(self.run_guard(self.log().replace(old, new, 1)), 0)
 

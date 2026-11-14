@@ -17,7 +17,8 @@
     "build": "tsc",
     "test": "npm run build && node --test dist/test/*.test.js",
     "test:rust-abi": "node test/check-rust-abi.mjs",
-    "test:settlement-abi": "node test/check-rust-abi.mjs --settlement"
+    "test:settlement-abi": "node test/check-rust-abi.mjs --settlement",
+    "test:lifecycle-abi": "node test/check-rust-abi.mjs --lifecycle"
   },
   "dependencies": {
     "@solana/web3.js": "1.98.4",

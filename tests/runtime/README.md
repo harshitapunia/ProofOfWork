@@ -37,7 +37,7 @@ explicit pin change; never disable the guard.
 
 23 core tests cover settlement, refunds, lifecycle, local signed history and
 failed transfer/closure/completion atomicity. Financial core fixtures use
-placeholder signatures. The 26 bridge tests use real TypeScript-generated
+placeholder signatures. The 46 bridge tests use real TypeScript-generated
 wire bytes and signed settlement/attack transactions; two cases are client
 preflight rejection only. Lifecycle setup uses placeholder signatures.
 Synthetic overflow/shortfall/completion prestates are labelled in source;
@@ -95,3 +95,15 @@ platform-tools v1.57 and Solana CLI 4.1.2 on Linux, selects host Rust 1.98.1,
 builds keylessly and enforces the unchanged reviewed SBF hash before running all
 core and bridge suites. Missing or skipped runtime cases fail CI. Actual GitHub
 run results must be checked; local historical results are not GitHub CI evidence.
+
+
+## Lifecycle client extension
+
+The 46 bridge cases include the original 26 settlement/attack cases and 20 new
+assignment/submission/refund cases. They call the actual finance-client builders,
+then sign exact bytes with disposable in-memory identities. Creation/funding and
+optional assignment setup are labeled trusted fixtures; targeted lifecycle
+operations are never reconstructed as Rust instructions. Existing two preflight-
+only cases remain. Synthetic Token/lamport overflow tests are fault injection,
+not economically reachable supply claims. The CI guard requires all 46 bridge
+tests in addition to the unchanged 23 core tests.

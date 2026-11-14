@@ -38,10 +38,10 @@ function i64(value: bigint): Buffer {
   const bytes = Buffer.alloc(8); bytes.writeBigInt64LE(value); return bytes;
 }
 /** Copies a nonzero 32-byte requirements commitment from raw bytes or exactly 64 hexadecimal characters. */
-function hash(value: Uint8Array | string): Buffer {
-  check(typeof value === "string" ? /^[0-9a-fA-F]{64}$/.test(value) : value instanceof Uint8Array && value.byteLength === 32, "invalid_requirements_hash");
+function hash(value: Uint8Array | string, errorCode = "invalid_requirements_hash"): Buffer {
+  check(typeof value === "string" ? /^[0-9a-fA-F]{64}$/.test(value) : value instanceof Uint8Array && value.byteLength === 32, errorCode);
   const bytes = typeof value === "string" ? Buffer.from(value, "hex") : Buffer.from(value);
-  check(bytes.some(b => b !== 0), "invalid_requirements_hash"); return bytes;
+  check(bytes.some(b => b !== 0), errorCode); return bytes;
 }
 /** Validates the sponsor public address and rejects the unset all-zero key; chain signatures remain authoritative. */
 function sponsor(value: PublicKeyInput): PublicKey {
@@ -303,4 +303,70 @@ export async function prepareSettlementTransaction(input: PrepareSettlementInput
   }
   tx.add(settleMilestoneInstruction({ ...normalized, sponsorDestination: destination }));
   return { transaction: tx, sponsorDestination: destination, destinationKind: kind };
+}
+
+/** Public, unsigned lifecycle inputs; account addresses are always derived. */
+export interface AssignStudentInput extends InternshipInput {
+  milestoneId: bigint;
+  student: PublicKeyInput;
+}
+export interface SubmitMilestoneInput extends AssignStudentInput {
+  /** Existing domain-separated evidence digest, never the private preimage. */
+  evidenceHash: Uint8Array | string;
+}
+export type RefundUnclaimedMilestoneInput = FundingInput;
+
+/** Reject unsupported account overrides and argument shapes before reading them. */
+function lifecycleArguments(input: unknown, required: readonly string[], optional: readonly string[] = []): void {
+  check(input !== null && typeof input === "object" && !Array.isArray(input), "invalid_arguments");
+  const allowed = [...required, ...optional];
+  check(required.every(field => Object.prototype.hasOwnProperty.call(input, field))
+    && Reflect.ownKeys(input).every(field => typeof field === "string" && allowed.includes(field)), "invalid_arguments");
+}
+function lifecycleRole(value: PublicKeyInput, errorCode: string): PublicKey {
+  const address = key(value);
+  check(!address.equals(PublicKey.default) && PublicKey.isOnCurve(address.toBytes()), errorCode);
+  return address;
+}
+
+/** Sponsor signs assignment. Stored state, verifier separation and deadlines remain on-chain checks. */
+export function assignStudentInstruction(input: AssignStudentInput): TransactionInstruction {
+  lifecycleArguments(input, ["sponsor", "internshipId", "milestoneId", "student"]);
+  const owner = sponsor(input.sponsor);
+  const student = lifecycleRole(input.student, "invalid_student");
+  check(!student.equals(owner), "invalid_student");
+  const internshipId = input.internshipId, milestoneId = input.milestoneId;
+  const [internship] = deriveInternship(owner, internshipId);
+  const [milestone] = deriveMilestone(internship, milestoneId);
+  return instruction([meta(owner, false, true), meta(internship), meta(milestone, true)],
+    Buffer.concat([Buffer.from("ab6ab5bae07f4114", "hex"), student.toBuffer()]));
+}
+
+/** Assigned student signs and pays submission rent. This validates a digest; it does not hash evidence. */
+export function submitMilestoneInstruction(input: SubmitMilestoneInput): TransactionInstruction {
+  lifecycleArguments(input, ["sponsor", "internshipId", "milestoneId", "student", "evidenceHash"]);
+  const owner = sponsor(input.sponsor);
+  const student = lifecycleRole(input.student, "invalid_student");
+  check(!student.equals(owner), "invalid_student");
+  const internshipId = input.internshipId, milestoneId = input.milestoneId;
+  const digest = hash(input.evidenceHash, "invalid_evidence_hash");
+  const [internship] = deriveInternship(owner, internshipId);
+  const [milestone] = deriveMilestone(internship, milestoneId);
+  return instruction([meta(student, true, true), meta(internship), meta(milestone, true),
+    meta(deriveSubmission(milestone)[0], true), meta(SystemProgram.programId)],
+  Buffer.concat([Buffer.from("2360dcd766538b34", "hex"), digest]));
+}
+
+/** Sponsor-only refund serializer; canonical classic sponsor ATA policy is deliberately unchanged. */
+export function refundUnclaimedMilestoneInstruction(input: RefundUnclaimedMilestoneInput): TransactionInstruction {
+  lifecycleArguments(input, ["sponsor", "internshipId", "milestoneId"], ["rewardMint", "tokenProgram"]);
+  tokenConfig(input);
+  const owner = sponsor(input.sponsor);
+  const internshipId = input.internshipId, milestoneId = input.milestoneId;
+  const [internship] = deriveInternship(owner, internshipId);
+  const [milestone] = deriveMilestone(internship, milestoneId);
+  return instruction([meta(owner, true, true), meta(internship), meta(milestone, true), meta(key(DEMO_MINT)),
+    meta(deriveVault(milestone)[0], true), meta(deriveVaultAuthority(milestone)[0]),
+    meta(deriveSponsorAta(owner), true), meta(key(TOKEN_PROGRAM_ID))],
+  Buffer.from("702a33229ff75c04", "hex"));
 }
