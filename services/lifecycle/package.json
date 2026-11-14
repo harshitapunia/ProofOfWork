@@ -1,0 +1,34 @@
+{
+  "name": "@proofwork/lifecycle",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.14.1"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "test:layouts": "node ../../packages/finance-client/test/check-rust-abi.mjs --accounts"
+  },
+  "dependencies": {
+    "@proofwork/finance-client": "file:../../packages/finance-client",
+    "@solana/web3.js": "1.98.4"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.0",
+    "typescript": "5.7.3"
+  },
+  "overrides": {
+    "@solana/web3.js@1.98.4": {
+      "jayson": "5.0.0"
+    }
+  }
+}
