@@ -100,7 +100,8 @@ export function decodeSubmission(at: string, value: unknown, parent: Milestone):
 export function decodeCompletionRecord(at: string, value: unknown, parent: Milestone, submission: Submission): CompletionRecord {
   return decoding(() => {
     check(milestones.has(parent) && submissions.has(submission) && parent.status === "Settled"
-      && submission.milestone === parent.address && submission.address === parent.submission);
+      && submission.milestone === parent.address && submission.address === parent.submission
+      && submission.student === parent.student);
     const d = account(value, "CompletionRecord", 249), [pda, bump] = deriveCompletion(parent.address);
     const verifiedAt = d.readBigInt64LE(232), settledAt = d.readBigInt64LE(240);
     check(pda.toBase58() === at && d[248] === bump && pk(d, 8) === parent.address

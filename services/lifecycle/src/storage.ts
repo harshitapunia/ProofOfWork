@@ -54,11 +54,11 @@ export class LifecycleStore {
         const version = db!.prepare("PRAGMA user_version").get()!.user_version;
         const application = db!.prepare("PRAGMA application_id").get()!.application_id;
         if (version === 0) {
-          check(application === 0 && db!.prepare("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").all().length === 0, "schema_mismatch");
+          check(application === 0 && db!.prepare("SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'").all().length === 0, "schema_mismatch");
           for (const sql of schema) db!.exec(sql);
           db!.exec("PRAGMA application_id=" + appId + "; PRAGMA user_version=1");
         } else check(version === 1 && application === appId, "schema_mismatch");
-        const actual = db!.prepare("SELECT sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all()
+        const actual = db!.prepare("SELECT sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY name").all()
           .map(row => row.sql).sort();
         check(JSON.stringify(actual) === JSON.stringify([...schema].sort()), "schema_mismatch");
       });
@@ -182,6 +182,8 @@ export class LifecycleStore {
           : ["failed", "reconciliation"].includes(String(e.state))
             && ["reserved", "prepared", "pending"].includes(String(before));
       }), "corrupt_store");
+    check((row.messageDigest !== undefined) === events.some(e => e.state === "prepared")
+      && (row.transactionId !== undefined) === events.some(e => e.state === "pending"), "corrupt_store");
     return Object.freeze(events.map(e => Object.freeze({ revision: e.revision as number, state: e.state as ReservationState })));
   }
   history(id: string): readonly { readonly revision: number; readonly state: ReservationState }[] {

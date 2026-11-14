@@ -219,3 +219,34 @@ test("untrusted metadata inspection never leaks raw exceptions",async t=>{
  assert.throws(()=>s.transition(r.id,0,"prepared",evil as never),bad("invalid_input"));
  await assert.rejects(s.reserveFallback(evil as never),bad("invalid_input"));
 });
+
+test("sqliteCache is a user table, never an empty adoptable database",t=>{
+ const x=temp(t),raw=x.raw();raw.exec("CREATE TABLE sqliteCache(value TEXT);INSERT INTO sqliteCache VALUES('preserved')");
+ assert.throws(()=>x.store(),bad("schema_mismatch"));
+ assert.equal(raw.prepare("SELECT value FROM sqliteCache").get()!.value,"preserved");
+ assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version,0);
+});
+test("sqliteAudit is a user trigger and must fail schema validation",t=>{
+ const x=temp(t);x.store().close();const raw=x.raw();
+ raw.exec("CREATE TRIGGER sqliteAudit AFTER INSERT ON history BEGIN SELECT 1; END");
+ assert.throws(()=>x.store(),bad("schema_mismatch"));
+});
+for(const column of ["message_digest","transaction_id"]){
+ test("terminal history retains pending metadata: "+column,t=>{
+  const x=temp(t),s=x.store(),r=s.reserveInternship(f.sponsor);
+  s.transition(r.id,0,"prepared",{messageDigest:"ab".repeat(32)});
+  const alphabet="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let n=BigInt("0x"+"07".repeat(64)),transactionId="";
+  while(n){transactionId=alphabet[Number(n%58n)]+transactionId;n/=58n;}
+  s.transition(r.id,1,"pending",{transactionId});s.transition(r.id,2,"reconciliation");
+  x.raw().prepare("UPDATE reservations SET "+column+"=NULL WHERE id=?").run(r.id);
+  assert.throws(()=>s.get(r.id),bad("corrupt_store"));
+  assert.throws(()=>s.listOutstanding(),bad("corrupt_store"));
+ });
+}
+test("direct reconciliation has no invented prepared or pending metadata",t=>{
+ const x=temp(t),s=x.store(),r=s.reserveInternship(f.sponsor);
+ s.transition(r.id,0,"reconciliation");
+ assert.equal(s.get(r.id)!.messageDigest,undefined);assert.equal(s.get(r.id)!.transactionId,undefined);
+ assert.deepEqual(s.history(r.id).map(e=>e.state),["reserved","reconciliation"]);
+});

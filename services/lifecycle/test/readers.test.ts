@@ -154,3 +154,15 @@ test("incorrect lifecycle links cannot be created by changing scope IDs",()=>{
   const x=decode(settled),wrong=deriveMilestone(x.i.address,1n)[0].toBase58();
   assert.throws(()=>decodeMilestone(wrong,account(settled.milestone),x.i),invalid());
 });
+
+test("completion rejects independently decoded roles that disagree with submission student",()=>{
+ const original=decode(settled),changed=structuredClone(settled);
+ const m=Buffer.from(changed.milestone.hex,"hex"),c=Buffer.from(changed.completion!.hex,"hex");
+ const student=Buffer.from(m.subarray(72,104)),verifier=Buffer.from(m.subarray(104,136));
+ verifier.copy(m,72);student.copy(m,104);
+ verifier.copy(c,40);student.copy(c,104);
+ changed.milestone.hex=m.toString("hex");changed.completion!.hex=c.toString("hex");
+ const parent=decodeMilestone(changed.milestone.address,account(changed.milestone),original.i);
+ assert.notEqual(parent.student,original.s!.student);
+ assert.throws(()=>decodeCompletionRecord(changed.completion!.address,account(changed.completion),parent,original.s!),invalid());
+});
