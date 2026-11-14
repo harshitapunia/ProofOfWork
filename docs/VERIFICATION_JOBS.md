@@ -180,7 +180,10 @@ executor is included; blocked work stays visible and retained.
 
 ## Validation
 
-Run the existing lifecycle check/build/test commands after finance/verifier builds.
+Install the existing finance/verifier/lifecycle locked dependencies first.
+The lifecycle test script explicitly builds finance/verifier prerequisites, then
+lifecycle and its tests; direct runs do not depend on stale generated artifacts.
+The standalone lifecycle typecheck still needs finance-client declarations built.
 The current workflow's lifecycle test glob includes all new tests in the existing
 verifier job; all six jobs, pins, read-only permissions and audit gates remain.
 

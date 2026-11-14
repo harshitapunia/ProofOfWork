@@ -54,9 +54,11 @@ From the repository root, using pinned Node and locked dependencies:
     npm --prefix services/lifecycle test
     npm --prefix services/lifecycle run test:layouts
 
-The verifier build is needed only by the compatibility regression that compares
-the existing Submitted reader. Production lifecycle code does not import verifier
-modules. Compiled layout checking uses the existing offline Rust ABI exporter
+After the three locked package installations, the lifecycle test script explicitly
+builds finance-client and verifier prerequisites before lifecycle/tests. Those
+verifier artifacts serve compatibility and non-hydratable authorization tests;
+production lifecycle code does not import verifier modules. The test script
+does not install dependencies or upgrade packages. Compiled layout checking uses the existing offline Rust ABI exporter
 infrastructure and requires the repository Rust dependencies/toolchain.
 
 Construct LifecycleStore with an absolute application-owned local database path

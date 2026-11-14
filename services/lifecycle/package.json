@@ -15,7 +15,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "build": "tsc",
-    "test": "npm run build && node --test dist/test/*.test.js",
+    "test": "npm --prefix ../../packages/finance-client run build && npm --prefix ../verifier run build && npm run build && node --test dist/test/*.test.js",
     "test:layouts": "node ../../packages/finance-client/test/check-rust-abi.mjs --accounts"
   },
   "dependencies": {
