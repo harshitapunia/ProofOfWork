@@ -7,6 +7,9 @@ import type { Request } from "../src/service.js";
 
 export const IMAGE = "node@sha256:" + "ab".repeat(32); // Synthetic test configuration only.
 export const COMMIT = "cd".repeat(20);
+export const TREE = "ab".repeat(20);
+export const SOURCE = Buffer.from("export function sum(values) { return values.reduce((a,b) => a+b, 0); }");
+export const BLOB = createHash("sha1").update(Buffer.from("blob " + SOURCE.length + "\0")).update(SOURCE).digest("hex");
 export const TOKEN = "test-user-credential";
 export function manifest(): Manifest {
   return { version: 1, repositoryId: "1001", task: "sum-v1", entry: "solution.mjs",
@@ -21,13 +24,13 @@ function onCurve(start: number): PublicKey {
   }
   throw new Error("fixture");
 }
-export function fixture() {
+export function fixture(entry = "solution.mjs") {
   const sponsor = onCurve(1), student = onCurve(50), verifier = onCurve(100);
   const id = Buffer.alloc(8); id.writeBigUInt64LE(1n);
   const [internship, ib] = PublicKey.findProgramAddressSync([Buffer.from("internship"), sponsor.toBuffer(), id], PROGRAM_ID);
   const [milestone, mb] = PublicKey.findProgramAddressSync([Buffer.from("milestone"), internship.toBuffer(), id], PROGRAM_ID);
   const [submission, sb] = PublicKey.findProgramAddressSync([Buffer.from("submission"), milestone.toBuffer()], PROGRAM_ID);
-  const bytes = Buffer.from(JSON.stringify(manifest()));
+  const bytes = Buffer.from(JSON.stringify({ ...manifest(), entry }));
   const requirements = sha256(Buffer.concat([Buffer.from("proofwork:requirements:v1"), bytes]));
   const request: Request = { manifestBase64: bytes.toString("base64"), milestone: milestone.toBase58(),
     student: student.toBase58(), repositoryId: "1001", contributorId: "2002", commit: COMMIT, nonce: "ef".repeat(32),
@@ -64,7 +67,12 @@ export function githubFetch(overrides: Record<string, unknown> = {}): Fetcher {
     const path = new URL(String(url)).pathname;
     let value: unknown;
     if (path === "/user") value = { id: 2002 };
-    else if (path.endsWith("/commits/" + COMMIT)) value = { sha: COMMIT };
+    else if (path === "/repos/proofwork-demo/assignment/commits/" + COMMIT) value = { sha: COMMIT, commit: { tree: { sha: TREE } } };
+    else if (path.endsWith("/git/commits/" + COMMIT)) value = { sha: COMMIT, tree: { sha: TREE } };
+    else if (path.endsWith("/git/trees/" + TREE)) {
+      if (new URL(String(url)).searchParams.get("recursive") !== "1") throw new Error("missing_recursive");
+      value = { sha: TREE, truncated: false, tree: [{ path: "solution.mjs", mode: "100644", type: "blob", sha: BLOB, size: SOURCE.length }] };
+    }
     else if (path.endsWith("/pulls/7")) value = { number: 7, user: { id: 2002 }, base: { repo: { id: 1001 } },
       head: { sha: COMMIT, repo: { id: 1001, full_name: "proofwork-demo/assignment" } } };
     else if (path.endsWith("/contents/solution.mjs")) {
