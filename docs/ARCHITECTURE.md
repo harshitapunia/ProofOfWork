@@ -27,10 +27,16 @@ require the canonical sponsor ATA. No caller gains payout authority.
 
 ## Off-chain components
 
-The finance client provides unsigned creation/funding/settlement builders,
-canonical derivations and validated atomic sponsor-destination fallback.
-Assignment/submission/refund production client coverage and general lifecycle
-queries remain integration work; the internal attestation builder already exists.
+The finance client provides unsigned creation/funding/assignment/submission/refund
+and settlement builders, canonical derivations and validated atomic sponsor
+destination fallback. The internal attestation builder remains in the verifier.
+
+[Lifecycle coordination](../services/lifecycle/README.md) adds validated read-only
+account snapshots and a single-host SQLite reservation ledger. IDs and public
+fallback bindings have transactional uniqueness, durable history and revision
+CAS. All participating workers must share the same local database; no multi-host
+coordination, transaction-confirmation writer or signing integration is provided.
+These records never override on-chain authority or hydrate verifier tickets.
 
 The verifier authenticates GitHub numeric identities, pins PR/commit/blob
 evidence, validates domain-separated commitments and checks submitted chain
@@ -42,8 +48,9 @@ approval JSON.
 Process-local single-use tickets and transaction policy, a test-only execution
 workflow, read-only RPC helpers and an offline recovery classifier are
 implemented. They are not durable operational signing or recovery. No production
-HTTP route activates them. Persistent uniqueness, worker fencing, custody,
-restart reconciliation and authenticated application orchestration remain open.
+HTTP route activates them. Local reservation uniqueness is now implemented;
+worker fencing, custody, operational restart reconciliation and authenticated
+application orchestration remain open.
 
 ## Validation and limits
 

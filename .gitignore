@@ -22,3 +22,9 @@ test-ledger
 # Python CI helper caches
 __pycache__/
 *.pyc
+
+# Local lifecycle coordination data; never commit live/test databases.
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal

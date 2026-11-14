@@ -48,6 +48,13 @@ jobs:
       - run: npm --prefix services/verifier run check
       - run: npm --prefix services/verifier run build
       - run: npm --prefix services/verifier test
+      - name: Validate lifecycle readers and real SQLite coordination
+        run: |
+          npm --prefix packages/finance-client ci --ignore-scripts
+          npm --prefix packages/finance-client run build
+          npm --prefix services/lifecycle ci --ignore-scripts
+          npm --prefix services/lifecycle run check
+          npm --prefix services/lifecycle test
   node-security:
     name: Node security and browser/RPC compatibility
     runs-on: ubuntu-24.04
@@ -65,6 +72,7 @@ jobs:
           npm ci --ignore-scripts
           npm --prefix packages/finance-client ci --ignore-scripts
           npm --prefix services/verifier ci --ignore-scripts
+          npm --prefix services/lifecycle ci --ignore-scripts
           npm --prefix tests/dependency-security ci --ignore-scripts
       - run: npm --prefix packages/finance-client run build
       - run: npm --prefix tests/dependency-security test
@@ -126,6 +134,7 @@ jobs:
       - run: npm --prefix packages/finance-client run test:rust-abi
       - run: npm --prefix packages/finance-client run test:settlement-abi
       - run: npm --prefix packages/finance-client run test:lifecycle-abi
+      - run: npm --prefix services/lifecycle run test:layouts
   runtime:
     name: Keyless SBF and all LiteSVM tests
     runs-on: ubuntu-24.04

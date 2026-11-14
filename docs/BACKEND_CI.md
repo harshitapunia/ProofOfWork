@@ -10,7 +10,7 @@ native Rust/Rust security; compiled ABI; keyless SBF/all LiteSVM tests.
 Finance/verifier jobs perform clean locked installs, type checking, builds and
 full default test suites. Live GitHub/Devnet/blockhash scripts are excluded.
 The ABI job fetches locked Rust dependencies before its offline exporters and
-shares their local target cache between both comparisons. The runtime job builds SBF once and runs the complete bridge once,
+shares their local target cache between comparisons. The runtime job builds SBF once and runs the complete bridge once,
 including all core suites; it rejects missing, failed, ignored or filtered cases.
 Historical counts (98 native, 112 finance, 330 verifier, 25 compatibility, 23 core
 runtime and 26 bridge) are baselines, not fabricated CI results or fixed future
@@ -115,3 +115,16 @@ real-browser/wallet adapters, live Devnet behavior, operational signing, durable
 jobs/recovery and complete application integration remain outside default CI.
 The approved contract specification and Settlement Destination Policy v2 are
 unchanged. No deployment or key generation occurs in this phase.
+
+
+## Lifecycle storage foundation validation
+
+The existing verifier job also builds the finance client, installs the locked
+services/lifecycle package and runs its typecheck and complete reader/SQLite
+suite. SQLite tests use temporary local databases, real connections, worker
+barriers and isolated process-crash fixtures. No application database is selected.
+The existing ABI job compiles account-layout fixtures from the unchanged Rust
+account types through the existing exporter infrastructure. The existing Node
+security job also installs/audits lifecycle with zero npm findings permitted.
+There are still six jobs; no signing, network database or deployment service is
+introduced. The pinned Node built-in SQLite API remains experimental.
