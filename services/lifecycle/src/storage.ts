@@ -5,6 +5,8 @@ import { isAbsolute } from "node:path";
 import { deriveInternship, deriveMilestone, deriveSponsorFallbackDestination,
   settleMilestoneInstruction } from "@proofwork/finance-client";
 import { address, check, exact, LifecycleError, MAX_ID, u64 } from "./common.js";
+import { migrateLifecycleSchema } from "./schema.js";
+import { createVerificationJobs, type VerificationJobs, type JobRecoveryControl } from "./jobs.js";
 
 export type ReservationState = "reserved" | "prepared" | "pending" | "confirmed" | "failed" | "reconciliation";
 export interface FallbackBindings {
@@ -17,12 +19,6 @@ export interface Reservation {
   readonly bindings: readonly string[]; readonly messageDigest?: string; readonly transactionId?: string;
 }
 const states = ["reserved", "prepared", "pending", "confirmed", "failed", "reconciliation"];
-const appId = 0x504f574c;
-const schema = [
-  "CREATE TABLE counters(kind TEXT NOT NULL CHECK(kind IN ('internship','milestone')), scope TEXT NOT NULL, next TEXT CHECK(next IS NULL OR (length(next)=20 AND next NOT GLOB '*[^0-9]*' AND next<='18446744073709551615')), PRIMARY KEY(kind,scope)) STRICT",
-  "CREATE TABLE reservations(id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('internship','milestone','fallback')), scope TEXT NOT NULL, value TEXT NOT NULL, address TEXT NOT NULL UNIQUE, bindings TEXT NOT NULL CHECK(json_valid(bindings)), identity TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('reserved','prepared','pending','confirmed','failed','reconciliation')), revision INTEGER NOT NULL CHECK(revision>=0 AND revision<=4), message_digest TEXT, transaction_id TEXT, UNIQUE(kind,scope,value)) STRICT",
-  "CREATE TABLE history(reservation_id TEXT NOT NULL REFERENCES reservations(id), revision INTEGER NOT NULL CHECK(revision>=0 AND revision<=4), state TEXT NOT NULL CHECK(state IN ('reserved','prepared','pending','confirmed','failed','reconciliation')), PRIMARY KEY(reservation_id,revision)) STRICT",
-];
 const digest = (v: string) => createHash("sha256").update(v).digest("hex");
 const fixed = (id: bigint) => u64(id).toString().padStart(20, "0");
 const ident = (v: unknown) => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v);
@@ -36,6 +32,10 @@ function signature(value: unknown): void {
 /** Local coordination only. No release/delete/retry/confirmation or signing API. */
 export class LifecycleStore {
   #db: DatabaseSync; #closed = false;
+  #jobs!: VerificationJobs; #jobRecovery!: JobRecoveryControl;
+  get jobs(): VerificationJobs { return this.#jobs; }
+  /** Trusted control plane only; do not pass this capability to ordinary workers. */
+  get jobRecovery(): JobRecoveryControl { return this.#jobRecovery; }
   constructor(path: string, busyTimeoutMs = 1000) {
     check(typeof path === "string" && isAbsolute(path) && !path.includes("\0")
       && Number.isSafeInteger(busyTimeoutMs) && busyTimeoutMs >= 0 && busyTimeoutMs <= 5000);
@@ -50,18 +50,9 @@ export class LifecycleStore {
       this.#db = db;
       check(db.prepare("PRAGMA journal_mode=DELETE").get()!.journal_mode === "delete", "storage_failure");
       db.exec("PRAGMA foreign_keys=ON; PRAGMA synchronous=EXTRA; PRAGMA trusted_schema=OFF");
-      this.#transaction(() => {
-        const version = db!.prepare("PRAGMA user_version").get()!.user_version;
-        const application = db!.prepare("PRAGMA application_id").get()!.application_id;
-        if (version === 0) {
-          check(application === 0 && db!.prepare("SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'").all().length === 0, "schema_mismatch");
-          for (const sql of schema) db!.exec(sql);
-          db!.exec("PRAGMA application_id=" + appId + "; PRAGMA user_version=1");
-        } else check(version === 1 && application === appId, "schema_mismatch");
-        const actual = db!.prepare("SELECT sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY name").all()
-          .map(row => row.sql).sort();
-        check(JSON.stringify(actual) === JSON.stringify([...schema].sort()), "schema_mismatch");
-      });
+      this.#transaction(() => migrateLifecycleSchema(db!));
+      const facade = createVerificationJobs((fn, write = true) => this.#transaction(() => fn(this.#db), write));
+      this.#jobs = facade.jobs; this.#jobRecovery = facade.recovery;
     } catch (error) {
       try { db?.close(); } catch { /* Sanitize initialization failure. */ }
       throw this.#error(error);

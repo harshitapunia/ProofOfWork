@@ -128,3 +128,9 @@ account types through the existing exporter infrastructure. The existing Node
 security job also installs/audits lifecycle with zero npm findings permitted.
 There are still six jobs; no signing, network database or deployment service is
 introduced. The pinned Node built-in SQLite API remains experimental.
+
+The lifecycle test glob also executes durable job migration/fencing/restart tests.
+A frozen, provenance-checked v1 implementation creates genuine historical
+reservations for the v2 migration tests. Separate thread/process claim races
+use barriers/IPC, not lease sleeps; SIGKILL fixtures use only temporary databases.
+Existing permissions, Node 24.14.1, rollback-journal safety and audit gates remain.
