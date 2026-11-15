@@ -193,3 +193,12 @@ remain trusted. Existing single-host limits, experimental node:sqlite behavior,
 DELETE/EXTRA WAL-issue avoidance, root tooling advisory debt and reviewed Rust
 maintenance notices remain unchanged. Passing agreed acceptance tests does not
 prove arbitrary work quality or that a designated verifier is honest.
+
+## Phase 8C-1 offline execution extension
+
+See [Execution and reconciliation](EXECUTION_RECONCILIATION.md). The current schema
+is v5; the existing v4 tables, permanent intent identities and authorization boundaries
+remain unchanged. New default lifecycle/verifier test globs include execution-ledger,
+authenticated offline fixture, migration, process-crash and concurrent SQLite cases.
+All execution/finality results are explicitly offline test models, never live RPC
+confirmation. No operational signer, sender or retry capability is introduced.

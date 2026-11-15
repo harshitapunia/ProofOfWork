@@ -5,3 +5,8 @@ export type { VerificationJobs, JobRecoveryControl, RecoveryEntry, JobBindings, 
   JobHistoryEntry, JobState, JobStep, VerificationJob } from "./jobs.js";
 export { INTENT_FORMAT } from "./transaction-intents.js";
 export type { TransactionIntents, TransactionIntent, IntentCreation, IntentState, IntentHistoryEntry, PreparationInput, Preparation } from "./transaction-intents.js";
+
+export type { ExecutionAttempt, ExecutionEvidence, ExecutionFacts, ExecutionPhase } from "./execution-model.js";
+export type { ExecutionAttempts, ExecutionRecoveryControl, ExecutionControlFence, ExecutionRef, ExecutionHistory } from "./execution-attempts.js";
+export { createOfflineTestExecutionObserver, offlineTestStatement } from "./execution-observations.js";
+export type { OfflineTestEnvelope, OfflineTestObservationSource, OfflineTestMessageValidator } from "./execution-observations.js";

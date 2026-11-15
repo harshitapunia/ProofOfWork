@@ -27,6 +27,14 @@ export const INTENT_SCHEMA_V4 = [
   "CREATE TRIGGER transaction_intent_history_no_delete BEFORE DELETE ON transaction_intent_history BEGIN SELECT RAISE(ABORT,'intent_history_retained'); END",
   "CREATE TRIGGER transaction_intent_history_no_update BEFORE UPDATE ON transaction_intent_history BEGIN SELECT RAISE(ABORT,'intent_history_immutable'); END",
 ];
+export const EXECUTION_SCHEMA_V5 = [
+  "CREATE TABLE execution_attempts(attempt_id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, intent_id TEXT NOT NULL UNIQUE REFERENCES transaction_intents(intent_id), observation_authority TEXT NOT NULL, identity TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision BETWEEN 0 AND 32)) STRICT",
+  "CREATE TABLE execution_history(attempt_id TEXT NOT NULL REFERENCES execution_attempts(attempt_id), revision INTEGER NOT NULL CHECK(revision BETWEEN 0 AND 32), event_id TEXT NOT NULL, event TEXT NOT NULL CHECK(json_valid(event)), digest TEXT NOT NULL, PRIMARY KEY(attempt_id,revision), UNIQUE(attempt_id,event_id)) STRICT",
+  "CREATE TRIGGER execution_no_delete BEFORE DELETE ON execution_attempts BEGIN SELECT RAISE(ABORT,'execution_retained'); END",
+  "CREATE TRIGGER execution_identity_immutable BEFORE UPDATE OF attempt_id,request_id,intent_id,observation_authority,identity ON execution_attempts BEGIN SELECT RAISE(ABORT,'immutable_execution'); END",
+  "CREATE TRIGGER execution_history_no_delete BEFORE DELETE ON execution_history BEGIN SELECT RAISE(ABORT,'execution_history_retained'); END",
+  "CREATE TRIGGER execution_history_no_update BEFORE UPDATE ON execution_history BEGIN SELECT RAISE(ABORT,'execution_history_immutable'); END",
+];
 const APP_ID = 0x504f574c;
 function validate(db: DatabaseSync, expected: readonly string[]): void {
   const actual = db.prepare("SELECT sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY name").all().map(row => row.sql).sort();
@@ -36,14 +44,14 @@ function validate(db: DatabaseSync, expected: readonly string[]): void {
 export function migrateLifecycleSchema(db: DatabaseSync): void {
   const version = db.prepare("PRAGMA user_version").get()!.user_version;
   const application = db.prepare("PRAGMA application_id").get()!.application_id;
-  check(version === 0 || version === 1 || version === 2 || version === 3 || version === 4, "schema_mismatch");
+  check(version === 0 || version === 1 || version === 2 || version === 3 || version === 4 || version === 5, "schema_mismatch");
   if (version === 0) {
     check(application === 0, "schema_mismatch"); validate(db, []);
     for (const sql of RESERVATION_SCHEMA_V1) db.exec(sql);
     db.exec("PRAGMA application_id=" + APP_ID);
   } else {
     check(application === APP_ID, "schema_mismatch");
-    validate(db, version === 1 ? RESERVATION_SCHEMA_V1 : version === 2 ? [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2] : version === 3 ? [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3] : [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3, ...INTENT_SCHEMA_V4]);
+    validate(db, version === 1 ? RESERVATION_SCHEMA_V1 : version === 2 ? [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2] : version === 3 ? [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3] : [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3, ...INTENT_SCHEMA_V4, ...(version === 5 ? EXECUTION_SCHEMA_V5 : [])]);
   }
   if (version === 0 || version === 1) {
     for (const sql of JOB_SCHEMA_V2) db.exec(sql);
@@ -57,5 +65,6 @@ export function migrateLifecycleSchema(db: DatabaseSync): void {
     for (const sql of INTENT_SCHEMA_V4) db.exec(sql);
     db.exec("PRAGMA user_version=4");
   }
-  validate(db, [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3, ...INTENT_SCHEMA_V4]);
+  if (version < 5) { for (const sql of EXECUTION_SCHEMA_V5) db.exec(sql); db.exec("PRAGMA user_version=5"); }
+  validate(db, [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3, ...INTENT_SCHEMA_V4, ...EXECUTION_SCHEMA_V5]);
 }

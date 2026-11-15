@@ -194,3 +194,12 @@ fresh independent authorization and reviewed expiration/submission policies.
 No mock handoff is converted or linked as submission evidence. If a future
 association is introduced, it must independently match job identity and exact
 message digest while continuing to grant no authority.
+
+## Phase 8C-1 offline execution extension
+
+See [Execution and reconciliation](EXECUTION_RECONCILIATION.md). The current schema
+is v5; the existing v4 tables, permanent intent identities and authorization boundaries
+remain unchanged. New default lifecycle/verifier test globs include execution-ledger,
+authenticated offline fixture, migration, process-crash and concurrent SQLite cases.
+All execution/finality results are explicitly offline test models, never live RPC
+confirmation. No operational signer, sender or retry capability is introduced.

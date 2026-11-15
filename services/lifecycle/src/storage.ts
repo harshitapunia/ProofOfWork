@@ -1,3 +1,4 @@
+import { createExecutionAttempts, type ExecutionAttempts, type ExecutionRecoveryControl } from "./execution-attempts.js";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, lstatSync } from "node:fs";
@@ -33,6 +34,10 @@ function signature(value: unknown): void {
 }
 /** Local coordination only. No release/delete/retry/confirmation or signing API. */
 export class LifecycleStore {
+  #executionAttempts!: ExecutionAttempts; #executionRecovery!: ExecutionRecoveryControl;
+  get executionAttempts(): ExecutionAttempts { return this.#executionAttempts; }
+  /** Trusted recovery-control capability; never pass to workers or request handlers. */
+  get executionRecovery(): ExecutionRecoveryControl { return this.#executionRecovery; }
   #db: DatabaseSync; #closed = false;
   #transactionIntents!: TransactionIntents;
   /** Trusted offline bookkeeping only; no signing or submission capability. */
@@ -59,6 +64,8 @@ export class LifecycleStore {
       check(db.prepare("PRAGMA journal_mode=DELETE").get()!.journal_mode === "delete", "storage_failure");
       db.exec("PRAGMA foreign_keys=ON; PRAGMA synchronous=EXTRA; PRAGMA trusted_schema=OFF");
       this.#transaction(() => migrateLifecycleSchema(db!));
+      const execution = createExecutionAttempts((fn, write = true) => this.#transaction(() => fn(this.#db), write));
+      this.#executionAttempts = execution.attempts; this.#executionRecovery = execution.recovery;
       const facade = createVerificationJobs((fn, write = true) => this.#transaction(() => fn(this.#db), write));
       this.#jobs = facade.jobs; this.#jobRecovery = facade.recovery;
       this.#transactionIntents = createTransactionIntents((fn, write = true) => this.#transaction(() => fn(this.#db), write));

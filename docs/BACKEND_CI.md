@@ -159,3 +159,12 @@ policy provenance/replay/expiry tests, durable fencing/intent integration and ow
 process crash tests. Test private keys remain only in memory. No credentials,
 operational signing, transport or new CI job is introduced. See
 [signer architecture](SIGNER_ARCHITECTURE.md).
+
+## Phase 8C-1 offline execution extension
+
+See [Execution and reconciliation](EXECUTION_RECONCILIATION.md). The current schema
+is v5; the existing v4 tables, permanent intent identities and authorization boundaries
+remain unchanged. New default lifecycle/verifier test globs include execution-ledger,
+authenticated offline fixture, migration, process-crash and concurrent SQLite cases.
+All execution/finality results are explicitly offline test models, never live RPC
+confirmation. No operational signer, sender or retry capability is introduced.

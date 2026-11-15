@@ -55,9 +55,15 @@ test("concurrent workers allocate unique IDs using real SQLite connections",{tim
   {workerData:{path:x.path,sponsor:f.sponsor,gate,count:20}}));
  t.after(async()=>{await Promise.all(workers.map(w=>w.terminate()));});
  await Promise.all(workers.map(async w=>{const [msg]=await once(w,"message");assert.equal(msg,"ready");}));
- const results=workers.map(w=>once(w,"message"));
- Atomics.store(new Int32Array(gate),0,1);Atomics.notify(new Int32Array(gate),0);
- const values=(await Promise.all(results)).flatMap(([v])=>v as string[]).map(BigInt).sort((a,b)=>a<b?-1:1);
+ // Race all four connections per round; no worker monopolizes 20 consecutive
+ // fsync transactions while another exhausts its unchanged bounded busy wait.
+ const collected:string[]=[];
+ for(let round=1;round<=20;round++){
+  const results=workers.map(w=>once(w,"message"));
+  Atomics.store(new Int32Array(gate),0,round);Atomics.notify(new Int32Array(gate),0);
+  collected.push(...(await Promise.all(results)).map(([v])=>v as string));
+ }
+ const values=collected.map(BigInt).sort((a,b)=>a<b?-1:1);
  assert.equal(new Set(values).size,80);assert.deepEqual(values,Array.from({length:80},(_,n)=>BigInt(n)));
  assert.equal(x.store().reserveInternship(f.sponsor).value,80n);
 });
@@ -146,8 +152,8 @@ for(const mode of ["committed","uncommitted"]){
 }
 test("migration initializes once and rejects newer/foreign schema without discarding data",t=>{
  const x=temp(t),s=x.store();const r=s.reserveInternship(f.sponsor);s.close();
- x.store().close();const raw=x.raw();assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version,4);
- raw.exec("PRAGMA user_version=5");assert.throws(()=>x.store(),bad("schema_mismatch"));
+ x.store().close();const raw=x.raw();assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version,5);
+ raw.exec("PRAGMA user_version=6");assert.throws(()=>x.store(),bad("schema_mismatch"));
  assert.equal(raw.prepare("SELECT id FROM reservations").get()!.id,r.id);
 });
 test("unrecognized existing database is never adopted or erased",t=>{
