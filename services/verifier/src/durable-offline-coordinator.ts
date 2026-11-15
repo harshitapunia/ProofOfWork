@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
-import { LifecycleStore, type JobBindings, type JobClaim, type VerificationJob } from "@proofwork/lifecycle";
+import { LifecycleStore, INTENT_FORMAT, type JobBindings, type JobClaim, type VerificationJob } from "@proofwork/lifecycle";
 import { PROGRAM_ID, SETTLEMENT_DEVNET_GENESIS } from "@proofwork/finance-client";
 import { AttestationError, buildAttestMilestoneInstruction } from "./attestation.js";
 import type { AttestationStateReader } from "./attestation-chain.js";
 import { evidenceHash } from "./commitments.js";
 import { parseManifest } from "./manifest.js";
 import { parseRequest, type VerifierService } from "./service.js";
-import { AttestationTransactionCoordinator, type CoordinationGuard } from "./transaction-coordinator.js";
+import { AttestationTransactionCoordinator, type CoordinationGuard, type PolicySimulationBoundary } from "./transaction-coordinator.js";
 import type { TransactionPolicyConfig, TrustedBlockhashSource } from "./transaction-policy.js";
+
+import { OfflineDualSignatureSimulation, OfflineSimulationError, type OfflineSimulationEvidence } from "./offline-signature-simulation.js";
 
 export class OfflineAuthorizationError extends Error {
   constructor(public readonly code: string) { super(code); }
@@ -36,10 +38,12 @@ export class DurableOfflineCoordinator {
   readonly #config: Readonly<TransactionPolicyConfig>;
   readonly #options: Readonly<OfflineMockOptions>;
   readonly #messages = new WeakMap<object, Buffer>();
+  readonly #simulationEvidence = new WeakMap<object, OfflineSimulationEvidence>();
   constructor(private readonly store: LifecycleStore, private readonly service: Pick<VerifierService, "verify">,
     private readonly chain: AttestationStateReader, config: TransactionPolicyConfig,
     private readonly workerId: string, private readonly blockhashes: TrustedBlockhashSource,
-    private readonly now: () => number = () => performance.now(), options: OfflineMockOptions = { mode: "offline-mock" }) {
+    private readonly now: () => number = () => performance.now(), options: OfflineMockOptions = { mode: "offline-mock" },
+    private readonly simulation?: OfflineDualSignatureSimulation) {
     check(/^[A-Za-z0-9_-]{1,80}$/.test(workerId), "invalid_worker");
     check(Object.keys(options).every(k => ["mode", "outcome", "timeoutMs", "gate"].includes(k))
       && options.mode === "offline-mock" && ["record", "reject", "failure"].includes(options.outcome ?? "record")
@@ -47,6 +51,9 @@ export class DurableOfflineCoordinator {
       && (options.timeoutMs ?? 1000) <= 1000, "invalid_mock_configuration");
     check(options.gate === undefined || (Object.keys(options.gate).length === 1 && typeof options.gate.wait === "function"),
       "invalid_mock_configuration");
+    check(simulation === undefined || (simulation instanceof OfflineDualSignatureSimulation
+      && simulation.mode === "ephemeral-offline-test" && simulation.verifier === config.verifier
+      && simulation.feePayer === config.feePayer), "incorrect_simulation_identity");
     this.#config = Object.freeze({ ...config });
     // Capture the test scheduler, so configuration mutation cannot swap the boundary.
     this.#options = Object.freeze({ mode: "offline-mock", outcome: options.outcome, timeoutMs: options.timeoutMs,
@@ -56,6 +63,11 @@ export class DurableOfflineCoordinator {
   readMockMessage(receipt: OfflineMockReceipt): Buffer {
     const message = this.#messages.get(receipt);
     check(message, "invalid_mock_receipt"); return Buffer.from(message);
+  }
+  /** Ephemeral test evidence only, never durable signature authority or executable transaction bytes. */
+  readSimulationEvidence(receipt: OfflineMockReceipt): OfflineSimulationEvidence {
+    const evidence = this.#simulationEvidence.get(receipt);
+    check(evidence, "invalid_simulation_receipt"); return evidence;
   }
   async coordinate(creationId: string, input: unknown, githubToken: string): Promise<OfflineMockReceipt> {
     const request = parseRequest(structuredClone(input));
@@ -105,37 +117,77 @@ export class DurableOfflineCoordinator {
       current(); const result = await this.blockhashes.read(); current(); return result;
     } };
     let receipt: OfflineMockReceipt | undefined;
-    const boundary = { mode: "offline-mock" as const, publicKey: this.#config.verifier,
-      acceptAuthorizedMessage: async (message: Uint8Array) => {
+    const handoff = async (message: Uint8Array, policyMessage?: unknown) => {
+      current();
+      const copy = Buffer.from(message), messageDigest = createHash("sha256").update(copy).digest("hex");
+      let began = false, evidence: OfflineSimulationEvidence | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const gate = async () => {
+        await Promise.race([
+          this.#options.gate!.wait(),
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new OfflineAuthorizationError("mock_timeout")),
+            this.#options.timeoutMs ?? 1000); }),
+        ]);
+      };
+      const mockOutcome = () => {
         current();
-        const copy = Buffer.from(message), messageDigest = createHash("sha256").update(copy).digest("hex");
-        this.store.offlineHandoffs.begin(claim, job.revision, messageDigest);
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          if (this.#options.gate) await Promise.race([
-            this.#options.gate.wait(),
-            new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new OfflineAuthorizationError("mock_timeout")),
-              this.#options.timeoutMs ?? 1000); }),
-          ]);
-          current();
-          if (this.#options.outcome === "reject") throw new OfflineAuthorizationError("mock_rejected");
-          if (this.#options.outcome === "failure") throw new OfflineAuthorizationError("mock_failure");
-          // Sole mock side effect: fencing and receipt insertion share BEGIN IMMEDIATE.
-          // No DB lock is held across the scheduling gate; no external signer is called.
-          this.store.offlineHandoffs.finish(claim, job.revision, messageDigest, "recorded", "acknowledged");
-          receipt = Object.freeze({ mode: "offline-mock", receiptId: "offline-mock:" + job.jobId, jobId: job.jobId,
-            messageDigest, signingAuthorization: "not_granted" });
-          this.#messages.set(receipt, copy);
-        } catch (error) {
-          // A revoked worker cannot write even a failure outcome. Its durable pending intent remains uncertain.
-          current();
+        if (this.#options.outcome === "reject") throw new OfflineAuthorizationError("mock_rejected");
+        if (this.#options.outcome === "failure") throw new OfflineAuthorizationError("mock_failure");
+      };
+      try {
+        if (policyMessage !== undefined) {
+          check(this.simulation, "missing_simulation");
+          evidence = await this.simulation.simulate(policyMessage, {
+            checkpoint: current,
+            prepare: context => {
+              current();
+              check(context.messageDigest === messageDigest && context.operationKey === job.operationKey
+                && context.milestone === job.bindings.milestone && context.programId === job.bindings.programId, "transaction_substitution");
+              const created = this.store.transactionIntents.createIntent(claim, job.revision, creationId, this.#config.feePayer);
+              check(created.created, "simulation_intent_already_exists");
+              const prepared = this.store.transactionIntents.recordPreparation(claim, job.revision, created.intent.intentId,
+                created.intent.identity, 0, { messageDigest, format: INTENT_FORMAT, blockhash: context.blockhash,
+                  lastValidBlockHeight: String(context.lastValidBlockHeight), observedBlockHeight: String(context.observedBlockHeight) });
+              // V4 cannot represent durable signature evidence. Burn/retain it BEFORE any test provider call.
+              this.store.transactionIntents.requireReconciliation(claim, job.revision, prepared.intentId, prepared.identity, prepared.revision);
+              this.store.offlineHandoffs.begin(claim, job.revision, messageDigest); began = true;
+            },
+            beforeProviders: async () => { if (this.#options.gate) await gate(); mockOutcome(); },
+          });
+        } else {
+          this.store.offlineHandoffs.begin(claim, job.revision, messageDigest); began = true;
+          if (this.#options.gate) await gate();
+          mockOutcome();
+        }
+        current();
+        // Only local mock acceptance. This receipt does not mean a real signer/submission occurred.
+        this.store.offlineHandoffs.finish(claim, job.revision, messageDigest, "recorded", "acknowledged");
+        receipt = Object.freeze({ mode: "offline-mock", receiptId: "offline-mock:" + job.jobId, jobId: job.jobId,
+          messageDigest, signingAuthorization: "not_granted" });
+        this.#messages.set(receipt, copy);
+        if (evidence) this.#simulationEvidence.set(receipt, evidence);
+      } catch (error) {
+        current();
+        if (began) {
           const reason = error instanceof OfflineAuthorizationError && error.code === "mock_rejected" ? "mock_rejected"
-            : error instanceof OfflineAuthorizationError && error.code === "mock_timeout" ? "mock_timeout" : "mock_failure";
+            : (error instanceof OfflineAuthorizationError && error.code === "mock_timeout")
+              || (error instanceof OfflineSimulationError && error.code === "simulation_timeout") ? "mock_timeout" : "mock_failure";
           this.store.offlineHandoffs.finish(claim, job.revision, messageDigest,
             reason === "mock_rejected" ? "rejected" : "uncertain", reason);
-          throw error;
-        } finally { if (timer !== undefined) clearTimeout(timer); }
-      } };
+        }
+        throw error;
+      } finally { if (timer !== undefined) clearTimeout(timer); }
+    };
+    const boundary = this.simulation ? {
+      mode: "offline-policy-simulation" as const, publicKey: this.#config.verifier, feePayer: this.#config.feePayer,
+      acceptPolicyConsumedMessage: async (message: unknown) => {
+        check(Buffer.isBuffer(message), "invalid_consumed_message");
+        await handoff(message, message);
+      },
+    } satisfies PolicySimulationBoundary : {
+      mode: "offline-mock" as const, publicKey: this.#config.verifier,
+      acceptAuthorizedMessage: async (message: Uint8Array) => handoff(message),
+    };
     try {
       step("verification_running");
       const coordinator = new AttestationTransactionCoordinator(service, chain, this.#config, boundary, blockhashes, this.now, guard);

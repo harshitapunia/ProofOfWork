@@ -174,3 +174,11 @@ The composition is not an authenticated application API: its caller must already
 be trusted to reserve operations. Invalid credentials/evidence may permanently
 reject a reserved operation. Exposing it to untrusted callers could cause denial
 of service; authenticated orchestration and operator reconciliation remain planned.
+
+## Optional ephemeral signature simulation
+
+The default offline-mock path remains unchanged. The separately configured
+[signer architecture](SIGNER_ARCHITECTURE.md) adds a policy-consumed, test-only
+dual-role simulation. It never promotes an old receipt or metadata to authority
+and leaves v4 reconciliation retained before provider work. Its local crypto
+evidence is process-local and does not represent an operational signer.

@@ -22,7 +22,7 @@ accepts no caller transaction bytes or approval JSON. It records only the public
 message digest and lease metadata, returning a defensive message copy. Storage
 accepts strictly shaped public bookkeeping assertions from trusted backend code;
 it does not certify those assertions as authorized or permit their later use to
-reconstruct a ticket. Direct coordinator/signing integration remains PLANNED.
+reconstruct a ticket. Operational signer integration remains PLANNED. The optional\n[ephemeral test path](SIGNER_ARCHITECTURE.md) creates a NEW intent during genuine\npolicy consumption; it never promotes this preparer or an existing row.
 
 ## Identity and permanent operation reservation
 

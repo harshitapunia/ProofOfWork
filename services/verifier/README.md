@@ -305,3 +305,13 @@ preparation helper. It uses an explicit trusted chain/lease source and existing
 attestation builder, records one immutable digest and never resumes an existing
 intent. It grants no signing, submission or retry permission. HTTP routes do not
 import it. See [transaction intent architecture](../../docs/TRANSACTION_INTENTS.md).
+
+## Ephemeral signer and fee-payer tests
+
+[Signer architecture](../../docs/SIGNER_ARCHITECTURE.md) adds an explicitly optional
+internal dual-role test adapter. It requires original single-use policy consumption,
+keeps the original deadline and verifies both signatures over the exact message.
+Private-key generation/signing lives only in test fixtures; runtime source only
+verifies public signatures. No server route activates it and no signed transaction
+is returned. V4 intents remain reconciliation-required, including after local mock
+success. No signing credentials or live submission configuration are provided.
