@@ -13,15 +13,17 @@ test("validated protocol data cannot restore consumed authorization or offline o
  const data=[validateAdmission(x.admission,x.anchor,x.snapshot),
  validateSubmission(x.submission,x.admission,x.roles,x.outcomes,x.anchor,x.snapshot),
  validateObservation(x.observation,x.submission,x.admission,x.anchor,x.snapshot)];
- const observer=createOfflineTestExecutionObserver({mode:"offline-test-observation-source",read:async()=>{throw Error("unexpected_source");}},
- {mode:"offline-fixture-message-validator",validate:async()=>{throw Error("unexpected_validator");}});
+ let sourceCalls=0,validatorCalls=0;
+ const observer=createOfflineTestExecutionObserver({mode:"offline-test-observation-source",read:async()=>{sourceCalls++;throw Error("unexpected_source");}},
+ {mode:"offline-fixture-message-validator",validate:async()=>{validatorCalls++;throw Error("unexpected_validator");}});
  for(const v of data){
   for(const a of [v,v.data,JSON.parse(JSON.stringify(v))]){
    await assert.rejects(authorizer.takeInstruction(a),{code:"invalid_authorization"});
    await assert.rejects(policy.consume(a),{code:"invalid_transaction_authorization"});
-   await assert.rejects(observer.observe(a as ExecutionAttempt));
+   await assert.rejects(observer.observe(a as ExecutionAttempt),{code:"untrusted_execution_snapshot"});
   }
  }
+ assert.equal(sourceCalls,0);assert.equal(validatorCalls,0);
  assert.throws(()=>takeOfflinePolicyMessage(Buffer.from(x.admission.messageBase64,"base64")));
 });
 test("contract identifiers are immutable bindings, not self-authenticating request IDs",()=>{
