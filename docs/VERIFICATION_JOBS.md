@@ -49,17 +49,17 @@ file/schema can bypass them. Hash chains detect inconsistency, not hostile stora
 that rewrites every row and digest. The database is not an authorization authority.
 
 Every open holds BEGIN IMMEDIATE for migration. Fresh v0 must be empty and have
-no application identity, then creates v1 plus v2 in one transaction. Genuine v1
+no application identity, then creates v1, v2 and v3 in one transaction. Genuine v1
 must match its exact schema/application ID BEFORE adding any v2 objects.
-Existing v2 must match all five tables/four triggers exactly. Foreign, altered,
+Existing v2 must match all five tables/four triggers exactly before explicit v3 migration. Foreign, altered,
 unexpected or unknown-version schemas fail closed; no IF NOT EXISTS, implicit
-repair or downgrade is provided. DDL and user_version=2 commit or roll back
+repair or downgrade is provided. DDL and current user_version=3 commit or roll back
 together. The v1 fixture is the actual approved implementation from main
 894f603523001ffb050d95bb5e87c278fbd41202 with only its import relocated; migration
 tests create real v1 reservations/history through that implementation.
 
 Quiesce all old workers, take a consistent backup and upgrade all participating
-processes before enabling this module. A v1-only binary rejects v2 on open.
+processes before enabling this module. Old v1/v2 binaries reject v3 on open; stop old processes before upgrading.
 Do not copy just a live main database file or reset counters after restoring an
 old backup. Restore reservation/job histories and reconcile external activity
 before resuming. Migration tests kill a process after partial uncommitted
@@ -197,3 +197,13 @@ transaction policy and offline recovery classifier.
 
 No live signing, transaction, Devnet deployment, public HTTP route, production
 scheduler or full application readiness is established.
+
+## Offline composition and schema v3
+
+The [offline authorization composition](OFFLINE_AUTHORIZATION.md) now reuses these
+unchanged job transitions and adds a separate append-only mock handoff journal.
+V2 schemas and histories remain unchanged. Schema v3 migration validates exact
+prior schemas transactionally. A receipt is local mock evidence, never a signer
+authorization or blockchain acknowledgment. The original non-durable coordinator
+remains available; callers needing cross-process coordination must use the new
+internal DurableOfflineCoordinator with one shared trusted store.

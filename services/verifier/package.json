@@ -3,18 +3,32 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24 <25" },
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
-    "check": "tsc --noEmit",
-    "build": "tsc",
+    "check": "npm run build:dependencies && tsc --noEmit",
+    "build": "npm run build:dependencies && tsc",
     "test": "npm run build && node --test dist/test/*.test.js",
     "start": "node dist/src/server.js",
     "test:sandbox": "npm run build && node dist/test/sandbox.js",
     "test:github:live": "npm run build && node dist/test/live-github.js",
     "test:devnet:live": "npm run build && node dist/test/live-devnet.js",
-    "test:blockhash:live": "npm run build && node dist/test/live-blockhash.js"
+    "test:blockhash:live": "npm run build && node dist/test/live-blockhash.js",
+    "build:dependencies": "npm --prefix ../../packages/finance-client run build && npm --prefix ../lifecycle run build"
   },
-  "dependencies": { "@solana/web3.js": "1.98.4" },
-  "devDependencies": { "@types/node": "24.0.0", "typescript": "5.7.3" },
-  "overrides": { "@solana/web3.js@1.98.4": { "jayson": "5.0.0" } }
+  "dependencies": {
+    "@solana/web3.js": "1.98.4",
+    "@proofwork/lifecycle": "file:../lifecycle",
+    "@proofwork/finance-client": "file:../../packages/finance-client"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.0",
+    "typescript": "5.7.3"
+  },
+  "overrides": {
+    "@solana/web3.js@1.98.4": {
+      "jayson": "5.0.0"
+    }
+  }
 }

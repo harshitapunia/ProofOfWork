@@ -3,12 +3,13 @@ import { PROGRAM_ID, evidenceHash, hex, key, sha256, u64 } from "./commitments.j
 import { parseManifest, suiteCaseIds } from "./manifest.js";
 import { VerifierService, type Request, type VerificationResult } from "./service.js";
 import { sumV2OutcomesPass } from "./sum-v2.js";
+import type { Failure } from "./errors.js";
 import { GitHub } from "./github.js";
 import { DockerRunner } from "./runner.js";
 import { DevnetAttestationReader, type AttestationState, type AttestationStateReader } from "./attestation-chain.js";
 
 export class AttestationError extends Error {
-  constructor(public readonly code: string) { super(code); }
+  constructor(public readonly code: string, public readonly verificationReason?: Failure) { super(code); }
 }
 function check(condition: unknown, code: string): asserts condition {
   if (!condition) throw new AttestationError(code);
@@ -51,7 +52,8 @@ function sameState(a: AttestationState, b: AttestationState): boolean {
     && Object.keys(a).length === Object.keys(b).length;
 }
 function validateResult(r: VerificationResult, s: AttestationState, request: Request, ids: readonly string[], isV2: boolean): void {
-  check(r.approved === true && r.status === "passed" && r.reason === undefined, "verification_failed");
+  if (!(r.approved === true && r.status === "passed" && r.reason === undefined))
+    throw new AttestationError("verification_failed", r.reason);
   check(isV2 ? sumV2OutcomesPass(r.outcomes)
     : Array.isArray(r.outcomes) && r.outcomes.length === ids.length
       && ids.every((id,index)=>Object.hasOwn(r.outcomes,index) && r.outcomes[index]?.id === id && r.outcomes[index]?.passed === true), "verification_failed");
@@ -70,7 +72,8 @@ export class AttestationAuthorizer {
   readonly #reserved = new Set<string>();
   constructor(private readonly service: Pick<VerifierService, "verify">,
     private readonly chain: AttestationStateReader, private readonly verifier: string,
-    private readonly now: () => number = () => performance.now()) { key(verifier); }
+    private readonly now: () => number = () => performance.now(),
+    private readonly onVerified?: () => void) { key(verifier); }
 
   /** Accepts evidence requests, NEVER VerificationResult/attestation JSON. Runs verification afresh. */
   async prepare(input: unknown, githubToken: string): Promise<object> {
@@ -95,6 +98,7 @@ export class AttestationAuthorizer {
       // Only the result of this trusted execution is examined; no method accepts a caller result.
       const result = await this.service.verify(structuredClone(request), githubToken);
       validateResult(result, initial, request, suiteCaseIds(manifest), manifest.task === "sum-v2");
+      this.onVerified?.(); // Trusted local bookkeeping after authoritative result validation, before ticket issue.
       const current = structuredClone(await this.chain.read(milestone));
       validateState(current, this.verifier);
       check(sameState(initial, current), "stale_chain_state");

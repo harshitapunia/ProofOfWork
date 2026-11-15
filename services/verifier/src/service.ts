@@ -16,7 +16,7 @@ export interface VerificationResult {
   outcomes: Outcome[]; startedAt: string; finishedAt: string;
   attestation?: { milestone: string; submission: string; verifier: string; expected_student: string; expected_requirements_hash: string; expected_evidence_hash: string };
 }
-function parseRequest(value: unknown): Request {
+export function parseRequest(value: unknown): Request {
   try {
     const r = object(value);
     exactKeys(r, ["manifestBase64", "milestone", "student", "repositoryId", "contributorId", "commit", "nonce", "owner", "repository", "pullRequest"], "invalid_request");
@@ -31,11 +31,12 @@ function parseRequest(value: unknown): Request {
 export class VerifierService {
   private readonly pending = new Set<string>();
   constructor(private readonly github: GitHub, private readonly chain: StateReader, private readonly runner: Runner) {}
-  async verify(input: unknown, githubToken: string): Promise<VerificationResult> {
+  async verify(input: unknown, githubToken: string, checkpoint?: () => void): Promise<VerificationResult> {
     const startedAt = new Date().toISOString();
     let result: VerificationResult = { status: "failed", approved: false, outcomes: [], startedAt, finishedAt: startedAt };
     let active: string | undefined;
     try {
+      checkpoint?.(); // Trusted server-local fencing only; never sourced from request JSON.
       const r = parseRequest(input);
       requireValue(!this.pending.has(r.milestone) && this.pending.size < 4, "request_in_progress");
       this.pending.add(r.milestone); active = r.milestone;
@@ -44,16 +45,20 @@ export class VerifierService {
       const { manifest, hash } = parseManifest(bytes);
       requireValue(manifest.repositoryId === r.repositoryId, "repository_mismatch");
       const state = await this.chain.read(r.milestone);
+      checkpoint?.();
       requireValue(state.milestone === r.milestone && state.student === r.student, "evidence_mismatch");
       requireValue(equal(hash, hex(state.requirementsHash, 32)), "requirements_mismatch");
       const evidence = evidenceHash({ ...r, requirementsHash: hash.toString("hex") });
       requireValue(equal(evidence, hex(state.evidenceHash, 32)), "evidence_mismatch");
       const githubInput: GitHubInput = r;
       await this.github.verify(githubInput, githubToken);
+      checkpoint?.();
       const source = await this.github.source(githubInput, githubToken, manifest.entry);
+      checkpoint?.();
       result = { ...result, milestone: state.milestone, student: state.student, repositoryId: r.repositoryId,
         contributorId: r.contributorId, commit: r.commit, requirementsHash: state.requirementsHash, evidenceHash: state.evidenceHash };
       const outcomes = await this.runner.run(source, manifest);
+      checkpoint?.();
       if (manifest.task === "sum-v1") result.outcomes = outcomes;
       const ids = suiteCaseIds(manifest);
       requireValue(manifest.task === "sum-v2" ? sumV2OutcomesPass(outcomes)
@@ -62,6 +67,7 @@ export class VerifierService {
       if (manifest.task === "sum-v2") result.outcomes = outcomes.map(o=>({id:o.id,passed:o.passed}));
       // No cached approval. Recheck mutable on-chain state after execution.
       const current = await this.chain.read(r.milestone);
+      checkpoint?.();
       requireValue(current.snapshot === state.snapshot, "invalid_onchain_state");
       result = { ...result, status: "passed", approved: true,
         attestation: { milestone: current.milestone, submission: current.submission, verifier: current.verifier,
