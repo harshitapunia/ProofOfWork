@@ -146,8 +146,8 @@ for(const mode of ["committed","uncommitted"]){
 }
 test("migration initializes once and rejects newer/foreign schema without discarding data",t=>{
  const x=temp(t),s=x.store();const r=s.reserveInternship(f.sponsor);s.close();
- x.store().close();const raw=x.raw();assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version,2);
- raw.exec("PRAGMA user_version=3");assert.throws(()=>x.store(),bad("schema_mismatch"));
+ x.store().close();const raw=x.raw();assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version,3);
+ raw.exec("PRAGMA user_version=4");assert.throws(()=>x.store(),bad("schema_mismatch"));
  assert.equal(raw.prepare("SELECT id FROM reservations").get()!.id,r.id);
 });
 test("unrecognized existing database is never adopted or erased",t=>{

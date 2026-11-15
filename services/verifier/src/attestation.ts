@@ -70,7 +70,8 @@ export class AttestationAuthorizer {
   readonly #reserved = new Set<string>();
   constructor(private readonly service: Pick<VerifierService, "verify">,
     private readonly chain: AttestationStateReader, private readonly verifier: string,
-    private readonly now: () => number = () => performance.now()) { key(verifier); }
+    private readonly now: () => number = () => performance.now(),
+    private readonly onVerified?: () => void) { key(verifier); }
 
   /** Accepts evidence requests, NEVER VerificationResult/attestation JSON. Runs verification afresh. */
   async prepare(input: unknown, githubToken: string): Promise<object> {
@@ -95,6 +96,7 @@ export class AttestationAuthorizer {
       // Only the result of this trusted execution is examined; no method accepts a caller result.
       const result = await this.service.verify(structuredClone(request), githubToken);
       validateResult(result, initial, request, suiteCaseIds(manifest), manifest.task === "sum-v2");
+      this.onVerified?.(); // Trusted local bookkeeping after authoritative result validation, before ticket issue.
       const current = structuredClone(await this.chain.read(milestone));
       validateState(current, this.verifier);
       check(sameState(initial, current), "stale_chain_state");

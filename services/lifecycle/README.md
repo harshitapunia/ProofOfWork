@@ -2,7 +2,8 @@
 
 IMPLEMENTED: validated read-only lifecycle observations, durable public
 reservations and verification-job coordination with database worker fencing.
-PLANNED: transaction submission, confirmation ingestion, durable verifier
+IMPLEMENTED: append-only offline mock handoff intent/receipt journal (schema v3).
+PLANNED: transaction submission, confirmation ingestion, operational signer
 authorization, operational transaction reconciliation and external-side-effect
 fencing. [Durable job design and APIs](../../docs/VERIFICATION_JOBS.md) define
 the separate worker and trusted recovery-control facades.
@@ -47,9 +48,9 @@ From the repository root, using pinned Node and locked dependencies:
 
     npm --prefix packages/finance-client ci --ignore-scripts
     npm --prefix packages/finance-client run build
+    npm --prefix services/lifecycle ci --ignore-scripts
     npm --prefix services/verifier ci --ignore-scripts
     npm --prefix services/verifier run build
-    npm --prefix services/lifecycle ci --ignore-scripts
     npm --prefix services/lifecycle run check
     npm --prefix services/lifecycle test
     npm --prefix services/lifecycle run test:layouts
@@ -71,11 +72,12 @@ No real database is created by importing the package.
 
 ## Schema and migration
 
-Initialization uses BEGIN IMMEDIATE, application_id=0x504f574c and user_version=2.
+Initialization uses BEGIN IMMEDIATE, application_id=0x504f574c and user_version=3.
 Version 1's exact three reservation tables are unchanged. The explicit v1-to-v2
 migration first validates that original schema, then adds two job tables and
-four pinned integrity triggers. Empty v0 databases initialize both versions
-atomically. Current v2 requires the exact full schema; foreign application IDs,
+four pinned integrity triggers. V3 validates the exact v2 schema and adds one append-only offline handoff journal
+and two integrity triggers without changing v2 job histories. Empty v0 databases
+initialize all versions atomically. Current v3 requires the exact full schema; foreign application IDs,
 unexpected objects, altered schemas and unsupported versions fail closed.
 All DDL and version updates commit atomically. Record/history reads share a
 consistent SQLite read transaction, so concurrent commits cannot mix revisions. No destructive migration, implicit
@@ -221,3 +223,7 @@ credential, wallet or blockchain transaction is required.
 
 References: [Node 24 SQLite](https://nodejs.org/download/release/v24.14.0/docs/api/sqlite.html),
 [SQLite WAL](https://sqlite.org/wal.html).
+
+See [durable offline authorization](../../docs/OFFLINE_AUTHORIZATION.md) for the
+server-internal composition, journal API semantics and conservative crash recovery.
+Journal metadata grants no signing authority.

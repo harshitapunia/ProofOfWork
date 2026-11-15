@@ -16,7 +16,7 @@ export interface VerificationResult {
   outcomes: Outcome[]; startedAt: string; finishedAt: string;
   attestation?: { milestone: string; submission: string; verifier: string; expected_student: string; expected_requirements_hash: string; expected_evidence_hash: string };
 }
-function parseRequest(value: unknown): Request {
+export function parseRequest(value: unknown): Request {
   try {
     const r = object(value);
     exactKeys(r, ["manifestBase64", "milestone", "student", "repositoryId", "contributorId", "commit", "nonce", "owner", "repository", "pullRequest"], "invalid_request");

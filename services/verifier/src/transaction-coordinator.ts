@@ -12,6 +12,11 @@ export interface MockMessageBoundary {
   readonly publicKey: string;
   acceptAuthorizedMessage(message: Uint8Array): Promise<void>;
 }
+/** Trusted server-local checkpoints, never request callbacks or authorization substitutes. */
+export interface CoordinationGuard {
+  assertCurrent(): void;
+  verified(): void;
+}
 export class CoordinatorError extends Error {
   constructor(public readonly code: string) { super(code); }
 }
@@ -28,10 +33,10 @@ export class AttestationTransactionCoordinator {
   constructor(service: Pick<VerifierService, "verify">, private readonly chain: AttestationStateReader,
     config: TransactionPolicyConfig, private readonly boundary: MockMessageBoundary,
     private readonly blockhashes: TrustedBlockhashSource = new DevnetBlockhashSource(),
-    now: () => number = () => performance.now()) {
+    now: () => number = () => performance.now(), private readonly guard?: CoordinationGuard) {
     this.#config = Object.freeze({ ...config });
     this.checkBoundary();
-    this.#authorizer = new AttestationAuthorizer(service, chain, this.#config.verifier, now);
+    this.#authorizer = new AttestationAuthorizer(service, chain, this.#config.verifier, now, () => { this.guard?.assertCurrent(); this.guard?.verified(); });
     this.#policy = new AttestationTransactionPolicy(this.#authorizer, chain, blockhashes, this.#config, now);
   }
   /** Rechecks the mock's identity immediately before handoff; no payer signing authority is implied. */
@@ -45,23 +50,30 @@ export class AttestationTransactionCoordinator {
    * State can still change after the final read. Reservations are neither durable nor cross-process.
    */
   async coordinate(input: unknown, githubToken: string): Promise<void> {
+    this.guard?.assertCurrent();
     this.checkBoundary();
     let request: Request;
     try { request = structuredClone(input) as Request; }
     catch { throw new CoordinatorError("invalid_request"); }
     const ticket = await this.#authorizer.prepare(request, githubToken);
+    this.guard?.assertCurrent();
     const state = await this.chain.read(request.milestone);
+    this.guard?.assertCurrent();
     const instruction = buildAttestMilestoneInstruction(state, this.#config.verifier);
     const observation = await this.blockhashes.read();
+    this.guard?.assertCurrent();
     const transaction = new Transaction({ feePayer: key(this.#config.feePayer), recentBlockhash: observation.blockhash })
       .add(instruction);
     const proposal = transaction.serialize({ requireAllSignatures: false, verifySignatures: false });
     const expectedMessage = transaction.serializeMessage();
     const approval = await this.#policy.authorize(ticket, proposal);
+    this.guard?.assertCurrent();
     const message = await this.#policy.consume(approval);
+    this.guard?.assertCurrent();
     if (!message.equals(expectedMessage)) throw new CoordinatorError("transaction_substitution");
     this.checkBoundary();
     // No intervening await or externally supplied bytes between final checks and the mock call.
     await this.boundary.acceptAuthorizedMessage(Buffer.from(message));
+    this.guard?.assertCurrent();
   }
 }

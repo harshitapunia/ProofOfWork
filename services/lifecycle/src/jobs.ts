@@ -25,7 +25,7 @@ interface JobRecord { job:VerificationJob;history:readonly JobHistoryEntry[];las
 const mutable = (v: JobMutable) => [v.state,v.revision,v.generation,v.workerId,v.verificationOutcome,v.recoveryReason];
 const historyHash = (id: string, revision: number, previous: string, event: readonly unknown[]) =>
   sha(JSON.stringify(["proofwork:job-history:v1",id,revision,previous,event]));
-function read(db: DatabaseSync, id: string): JobRecord | undefined {
+export function read(db: DatabaseSync, id: string): JobRecord | undefined {
   const raw = db.prepare("SELECT * FROM verification_jobs WHERE job_id=?").get(id);
   if (!raw) return undefined;
   const rows = db.prepare("SELECT revision,event,digest FROM verification_job_history WHERE job_id=? ORDER BY revision LIMIT 258").all(id);
@@ -56,7 +56,7 @@ function read(db: DatabaseSync, id: string): JobRecord | undefined {
     return {job,history:Object.freeze(history),lastDigest:previous};
   } catch { throw new LifecycleError("corrupt_store"); }
 }
-function append(db:DatabaseSync, old:JobRecord, event:readonly (string|number)[]):VerificationJob {
+export function append(db:DatabaseSync, old:JobRecord, event:readonly (string|number)[]):VerificationJob {
   const next = apply(old.job,event);
   const result=db.prepare("UPDATE verification_jobs SET state=?,revision=?,generation=?,worker_id=?,outcome=?,reason=? WHERE job_id=? AND revision=? AND generation=? AND identity=?")
     .run(next.state,next.revision,next.generation,next.workerId,next.verificationOutcome,next.recoveryReason,
@@ -66,7 +66,7 @@ function append(db:DatabaseSync, old:JobRecord, event:readonly (string|number)[]
     JSON.stringify(event),historyHash(old.job.identity,next.revision,old.lastDigest,event));
   return read(db,old.job.jobId)!.job;
 }
-function expected(db:DatabaseSync,id:string,identityValue:string,revision:number):JobRecord {
+export function expected(db:DatabaseSync,id:string,identityValue:string,revision:number):JobRecord {
   const record=read(db,id);check(record,"not_found");
   check(record.job.identity===identityValue,"job_conflict");check(record.job.revision===revision,"conflict");
   return record;

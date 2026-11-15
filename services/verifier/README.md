@@ -64,6 +64,8 @@ The worker environment must be dedicated to untrusted work. Docker containment i
 From this directory:
 
 ```sh
+npm --prefix ../../packages/finance-client ci --ignore-scripts
+npm --prefix ../lifecycle ci --ignore-scripts
 npm ci --ignore-scripts
 npm run check
 npm test
@@ -281,3 +283,17 @@ contributor, repository and non-head-commit rejections. Retrieved code was not
 executed. Adversarial tree/API failure cases remain deterministic mocks; this
 live result does not prove hostile-response handling, sandbox containment,
 private/fork enrollment, signing or complete application readiness.
+
+## Durable offline coordination
+
+The server-internal DurableOfflineCoordinator composes the existing trusted
+verifier/authorizer/exact-message policy with lifecycle job fencing and a local
+mock receipt journal. It is not wired to HTTP routes and cannot sign or submit.
+See [offline authorization design](../../docs/OFFLINE_AUTHORIZATION.md).
+Before verifier check/build/test, install all three local package dependencies:
+
+    npm --prefix packages/finance-client ci --ignore-scripts
+    npm --prefix services/lifecycle ci --ignore-scripts
+    npm --prefix services/verifier ci --ignore-scripts
+
+Verifier build/check explicitly build finance-client and lifecycle prerequisites.

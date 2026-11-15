@@ -134,3 +134,12 @@ A frozen, provenance-checked v1 implementation creates genuine historical
 reservations for the v2 migration tests. Separate thread/process claim races
 use barriers/IPC, not lease sleeps; SIGKILL fixtures use only temporary databases.
 Existing permissions, Node 24.14.1, rollback-journal safety and audit gates remain.
+
+## Durable offline authorization regression coverage
+
+The existing offline verifier job also runs durable authorization integration tests
+and lifecycle v3 journal/migration/crash tests. It installs finance-client,
+lifecycle and verifier dependencies before checking/building in dependency order.
+Verifier production composition imports lifecycle; lifecycle production never
+imports verifier. No new CI job or signing/deployment permissions are added.
+See [security architecture and threat matrix](OFFLINE_AUTHORIZATION.md).

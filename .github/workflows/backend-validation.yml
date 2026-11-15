@@ -44,15 +44,14 @@ jobs:
         with:
           node-version: '24.14.1'
           package-manager-cache: false
+      - run: npm --prefix packages/finance-client ci --ignore-scripts
+      - run: npm --prefix services/lifecycle ci --ignore-scripts
       - run: npm --prefix services/verifier ci --ignore-scripts
       - run: npm --prefix services/verifier run check
       - run: npm --prefix services/verifier run build
       - run: npm --prefix services/verifier test
       - name: Validate lifecycle readers, SQLite reservations and durable job fencing
         run: |
-          npm --prefix packages/finance-client ci --ignore-scripts
-          npm --prefix packages/finance-client run build
-          npm --prefix services/lifecycle ci --ignore-scripts
           npm --prefix services/lifecycle run check
           npm --prefix services/lifecycle test
   node-security:

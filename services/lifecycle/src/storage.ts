@@ -7,6 +7,7 @@ import { deriveInternship, deriveMilestone, deriveSponsorFallbackDestination,
 import { address, check, exact, LifecycleError, MAX_ID, u64 } from "./common.js";
 import { migrateLifecycleSchema } from "./schema.js";
 import { createVerificationJobs, type VerificationJobs, type JobRecoveryControl } from "./jobs.js";
+import { createOfflineHandoffs, type OfflineHandoffs } from "./offline-handoffs.js";
 
 export type ReservationState = "reserved" | "prepared" | "pending" | "confirmed" | "failed" | "reconciliation";
 export interface FallbackBindings {
@@ -32,6 +33,9 @@ function signature(value: unknown): void {
 /** Local coordination only. No release/delete/retry/confirmation or signing API. */
 export class LifecycleStore {
   #db: DatabaseSync; #closed = false;
+  #offlineHandoffs!: OfflineHandoffs;
+  /** Internal audit capability only: records mock receipts, never grants authorization. */
+  get offlineHandoffs(): OfflineHandoffs { return this.#offlineHandoffs; }
   #jobs!: VerificationJobs; #jobRecovery!: JobRecoveryControl;
   get jobs(): VerificationJobs { return this.#jobs; }
   /** Trusted control plane only; do not pass this capability to ordinary workers. */
@@ -53,6 +57,7 @@ export class LifecycleStore {
       this.#transaction(() => migrateLifecycleSchema(db!));
       const facade = createVerificationJobs((fn, write = true) => this.#transaction(() => fn(this.#db), write));
       this.#jobs = facade.jobs; this.#jobRecovery = facade.recovery;
+      this.#offlineHandoffs = createOfflineHandoffs((fn, write = true) => this.#transaction(() => fn(this.#db), write));
     } catch (error) {
       try { db?.close(); } catch { /* Sanitize initialization failure. */ }
       throw this.#error(error);

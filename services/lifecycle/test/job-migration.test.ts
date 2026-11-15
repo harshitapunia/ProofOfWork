@@ -12,14 +12,14 @@ test("v1 migration fixture is the actual approved implementation",()=>{
  const expected=readFileSync(new URL("../../test/fixtures/storage-v1.sha256",import.meta.url),"utf8").trim();
  assert.equal(createHash("sha256").update(source).digest("hex"),expected);
 });
-test("fresh v2 initialization and repeated opening share the original strict database",t=>{
+test("fresh v3 initialization and repeated opening share the original strict database",t=>{
  const x=temp(t),s=x.store(),raw=x.raw();
- assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version,2);
+ assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version,3);
  assert.equal(raw.prepare("PRAGMA journal_mode").get()!.journal_mode,"delete");
  const j=s.jobs.createOrGetJob("request",bindings());s.close();
  assert.deepEqual(x.store().jobs.getJob(j.jobId),j);
 });
-test("real v1 reservations and histories survive explicit v2 migration",async t=>{
+test("real v1 reservations and histories survive explicit migration to v3",async t=>{
  const x=temp(t),b=bindings(),old=new V1Store(x.path);
  const i=old.reserveInternship(b.sponsor,9007199254740993n),m=old.reserveMilestone(b.internship);
  old.transition(i.id,0,"prepared",{messageDigest:"ab".repeat(32)});
@@ -43,10 +43,10 @@ test("altered v1 schema is rejected before creating job tables",t=>{
 test("foreign application and unsupported versions cannot be adopted",t=>{
  const x=temp(t),old=new V1Store(x.path);old.close();const raw=x.raw();
  raw.exec("PRAGMA application_id=123");assert.throws(()=>x.store(),error("schema_mismatch"));
- raw.exec("PRAGMA application_id=1347376972;PRAGMA user_version=3");
+ raw.exec("PRAGMA application_id=1347376972;PRAGMA user_version=4");
  assert.throws(()=>x.store(),error("schema_mismatch"));
 });
-test("unexpected v2 objects and changed triggers fail exact schema validation",t=>{
+test("unexpected current-schema objects and changed triggers fail exact schema validation",t=>{
  const x=temp(t);x.store().close();const raw=x.raw();
  raw.exec("DROP TRIGGER verification_job_no_delete");
  raw.exec("CREATE TRIGGER verification_job_no_delete BEFORE DELETE ON verification_jobs BEGIN SELECT 1; END");
@@ -59,6 +59,6 @@ test("partial migration DDL/version writes roll back after process kill",{timeou
   await once(child,"message");const done=once(child,"exit");child.kill("SIGKILL");await done;
   const legacy=new V1Store(x.path);assert.equal(legacy.get(record.id)!.value,0n);legacy.close();
   const current=x.store();assert.equal(current.get(record.id)!.value,0n);
-  assert.equal(x.raw().prepare("PRAGMA user_version").get()!.user_version,2);
+  assert.equal(x.raw().prepare("PRAGMA user_version").get()!.user_version,3);
  }finally{if(child.exitCode===null&&child.signalCode===null)child.kill("SIGKILL");}
 });

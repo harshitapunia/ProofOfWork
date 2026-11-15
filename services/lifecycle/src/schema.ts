@@ -14,6 +14,11 @@ export const JOB_SCHEMA_V2 = [
   "CREATE TRIGGER verification_history_no_delete BEFORE DELETE ON verification_job_history BEGIN SELECT RAISE(ABORT,'history_retained'); END",
   "CREATE TRIGGER verification_history_no_update BEFORE UPDATE ON verification_job_history BEGIN SELECT RAISE(ABORT,'history_immutable'); END",
 ];
+export const HANDOFF_SCHEMA_V3 = [
+  "CREATE TABLE verification_offline_handoffs(job_id TEXT NOT NULL REFERENCES verification_jobs(job_id), sequence INTEGER NOT NULL CHECK(sequence IN (0,1)), event TEXT NOT NULL CHECK(json_valid(event)), digest TEXT NOT NULL, PRIMARY KEY(job_id,sequence)) STRICT",
+  "CREATE TRIGGER verification_handoff_no_delete BEFORE DELETE ON verification_offline_handoffs BEGIN SELECT RAISE(ABORT,'handoff_retained'); END",
+  "CREATE TRIGGER verification_handoff_no_update BEFORE UPDATE ON verification_offline_handoffs BEGIN SELECT RAISE(ABORT,'handoff_immutable'); END",
+];
 const APP_ID = 0x504f574c;
 function validate(db: DatabaseSync, expected: readonly string[]): void {
   const actual = db.prepare("SELECT sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY name").all().map(row => row.sql).sort();
@@ -23,18 +28,22 @@ function validate(db: DatabaseSync, expected: readonly string[]): void {
 export function migrateLifecycleSchema(db: DatabaseSync): void {
   const version = db.prepare("PRAGMA user_version").get()!.user_version;
   const application = db.prepare("PRAGMA application_id").get()!.application_id;
-  check(version === 0 || version === 1 || version === 2, "schema_mismatch");
+  check(version === 0 || version === 1 || version === 2 || version === 3, "schema_mismatch");
   if (version === 0) {
     check(application === 0, "schema_mismatch"); validate(db, []);
     for (const sql of RESERVATION_SCHEMA_V1) db.exec(sql);
     db.exec("PRAGMA application_id=" + APP_ID);
   } else {
     check(application === APP_ID, "schema_mismatch");
-    validate(db, version === 1 ? RESERVATION_SCHEMA_V1 : [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2]);
+    validate(db, version === 1 ? RESERVATION_SCHEMA_V1 : version === 2 ? [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2] : [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3]);
   }
-  if (version !== 2) {
+  if (version === 0 || version === 1) {
     for (const sql of JOB_SCHEMA_V2) db.exec(sql);
     db.exec("PRAGMA user_version=2");
   }
-  validate(db, [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2]);
+  if (version !== 3) {
+    for (const sql of HANDOFF_SCHEMA_V3) db.exec(sql);
+    db.exec("PRAGMA user_version=3");
+  }
+  validate(db, [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3]);
 }
