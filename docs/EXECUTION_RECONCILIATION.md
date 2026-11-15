@@ -101,3 +101,9 @@ concurrent connections, retaining all 80 unique/contiguous-ID assertions and the
 original 5000 ms worker busy timeout. File serialization alone did not eliminate
 writer starvation under local compilation load; that second failed run is retained
 in evidence. No production allocator retry or lock-policy change was introduced.
+
+Review correction: if uncertainty was recorded before signed identity, only the
+trusted control may attach independently verified identity. The phase remains
+submission_uncertain, so invocation stays blocked. Ordinary worker identity writes
+still require execution_record_created, enforced both at mutation and history replay.
+Matching independent status evidence may then strengthen the modeled outcome.

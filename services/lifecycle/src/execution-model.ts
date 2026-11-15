@@ -50,9 +50,10 @@ export function advance(old: ExecutionFacts, event: "invoke" | "uncertain" | Exe
   if (old.observedBlockHeight !== null) check(BigInt(event.observedBlockHeight) >= BigInt(old.observedBlockHeight), "height_regression");
   const next = {...old,observedBlockHeight:event.observedBlockHeight};
   if (event.kind === "signed_identity") {
-    check(old.phase === "execution_record_created", "invalid_transition");
+    const recoveryWindow = old.phase === "submission_uncertain" && old.wireDigest === null && !old.invocationRecorded;
+    check(old.phase === "execution_record_created" || recoveryWindow, "invalid_transition");
     check(event.finality === 0 && event.outcome === "none" && event.error === null && event.transactionSlot === null && event.contextSlot === null);
-    return {...next,phase:"submission_intent_recorded",wireDigest:event.wireDigest,testTransactionId:event.testTransactionId};
+    return {...next,phase:recoveryWindow ? "submission_uncertain" : "submission_intent_recorded",wireDigest:event.wireDigest,testTransactionId:event.testTransactionId};
   }
   check(old.wireDigest !== null, "missing_signed_identity");
   if (event.kind !== "status") {

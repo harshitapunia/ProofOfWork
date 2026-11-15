@@ -172,3 +172,22 @@ test("post-crash control can attach independently verified signed identity after
   assert.equal(a.reconciliationRequired,true);assert.equal(a.submissionAuthorized,false);
   assert.equal(x.s.transactionIntents.getIntent(x.intent.intentId)!.signingAuthorization,"not_granted");
 });
+
+for(const revoked of [false,true]) {
+  test("trusted control attaches identity after pre-identity uncertainty without reopening invocation; revoked="+revoked,async t=>{
+    const x=await fixture(t);
+    let a=x.s.executionAttempts.markUncertain(x.claim,x.job.revision,executionRef(x.attempt),"uncertain-before-identity");
+    if(revoked)x.s.jobRecovery.interruptJob(x.job.jobId,x.job.identity,x.job.revision,"operator");
+    a=x.s.executionAttempts.get(a.attemptId)!;
+    const workerToken=await x.observer().observe(a);
+    assert.throws(()=>x.s.executionAttempts.recordSubmissionIntent(x.claim,x.job.revision,executionRef(a),workerToken));
+    a=await x.record(a,{kind:"signed_identity"});
+    assert.equal(a.phase,"submission_uncertain");assert.notEqual(a.wireDigest,null);assert.equal(a.invocationRecorded,false);
+    assert.throws(()=>x.s.executionAttempts.recordSimulatedInvocation(x.claim,x.job.revision,executionRef(a),"forbidden-invocation"));
+    await assert.rejects(x.record(a,{kind:"signed_identity",eventId:"duplicate-identity"}));
+    a=await x.record(a,{kind:"status",finality:3,outcome:"success",transactionSlot:"110",contextSlot:"111"});
+    assert.equal(a.phase,"finalized_success_observed");assert.equal(a.invocationRecorded,false);
+    assert.equal(a.submissionAuthorized,false);assert.equal(a.retryAuthorized,false);assert.equal(a.signingAuthorization,"not_granted");
+    assert.equal(a.reconciliationRequired,revoked);
+  });
+}

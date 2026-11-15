@@ -77,7 +77,7 @@ function load(db: DatabaseSync, id: string) {
           check(v.attemptId === id && v.identity === identity && v.revision === n-1 && v.eventId === e.eventId
             && v.intentIdentity === intent.identity && v.preparationIdentity === intent.preparation.identity
             && v.bindingDigest === sha(bindingText(intent.bindings)));
-          if (e.actor === "worker") check(v.kind === "signed_identity");
+          if (e.actor === "worker") check(v.kind === "signed_identity" && facts.phase === "execution_record_created");
         } else if (e.evidence === "invoke") check(e.actor === "worker");
         facts = advance(facts,e.evidence,intent.preparation.lastValidBlockHeight);
       }
@@ -119,6 +119,8 @@ export function createExecutionAttempts(transaction: JobTransaction): {attempts:
       const old = load(db,ref.attemptId); check(old,"not_found");
       check(old.value.identity === ref.identity && old.value.revision === ref.revision,"conflict");
       const j = worker(db,c,jrev,old.value.intent);
+      if (typeof evidence === "object" && evidence.kind === "signed_identity")
+        check(old.value.phase === "execution_record_created","invalid_transition");
       return append(db,old,{eventId,revision:ref.revision+1,actor:"worker",actorId:c.workerId,
         jobRevision:j.revision,jobGeneration:j.generation,jobWorker:j.workerId,evidence});
     });
