@@ -297,3 +297,11 @@ Before verifier check/build/test, install all three local package dependencies:
     npm --prefix services/verifier ci --ignore-scripts
 
 Verifier build/check explicitly build finance-client and lifecycle prerequisites.
+
+## Offline intent preparation
+
+OfflineTransactionPreparer is a separate server-internal unsigned-message
+preparation helper. It uses an explicit trusted chain/lease source and existing
+attestation builder, records one immutable digest and never resumes an existing
+intent. It grants no signing, submission or retry permission. HTTP routes do not
+import it. See [transaction intent architecture](../../docs/TRANSACTION_INTENTS.md).

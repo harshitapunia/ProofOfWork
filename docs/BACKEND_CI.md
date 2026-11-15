@@ -143,3 +143,11 @@ lifecycle and verifier dependencies before checking/building in dependency order
 Verifier production composition imports lifecycle; lifecycle production never
 imports verifier. No new CI job or signing/deployment permissions are added.
 See [security architecture and threat matrix](OFFLINE_AUTHORIZATION.md).
+
+## Offline transaction-intent regression coverage
+
+The existing offline verifier job runs v4 intent/migration/history/fencing and
+separate-process crash/concurrency tests through the lifecycle test glob. The
+verifier glob runs actual unsigned-attestation preparation tests and crash
+checkpoints. All six jobs, pins, permissions and security gates remain unchanged.
+See [transaction intent design](TRANSACTION_INTENTS.md).
