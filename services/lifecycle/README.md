@@ -1,8 +1,11 @@
 # Lifecycle readers and local reservation storage
 
-IMPLEMENTED: validated read-only lifecycle observations and a durable public
-reservation ledger. PLANNED: transaction submission, confirmation ingestion,
-durable verifier authorization, operational reconciliation and worker fencing.
+IMPLEMENTED: validated read-only lifecycle observations, durable public
+reservations and verification-job coordination with database worker fencing.
+PLANNED: transaction submission, confirmation ingestion, durable verifier
+authorization, operational transaction reconciliation and external-side-effect
+fencing. [Durable job design and APIs](../../docs/VERIFICATION_JOBS.md) define
+the separate worker and trusted recovery-control facades.
 Nothing here signs, sends, retries, releases an ID or authorizes an attestation.
 
 ## Architecture decision
@@ -51,9 +54,11 @@ From the repository root, using pinned Node and locked dependencies:
     npm --prefix services/lifecycle test
     npm --prefix services/lifecycle run test:layouts
 
-The verifier build is needed only by the compatibility regression that compares
-the existing Submitted reader. Production lifecycle code does not import verifier
-modules. Compiled layout checking uses the existing offline Rust ABI exporter
+After the three locked package installations, the lifecycle test script explicitly
+builds finance-client and verifier prerequisites before lifecycle/tests. Those
+verifier artifacts serve compatibility and non-hydratable authorization tests;
+production lifecycle code does not import verifier modules. The test script
+does not install dependencies or upgrade packages. Compiled layout checking uses the existing offline Rust ABI exporter
 infrastructure and requires the repository Rust dependencies/toolchain.
 
 Construct LifecycleStore with an absolute application-owned local database path
@@ -66,10 +71,12 @@ No real database is created by importing the package.
 
 ## Schema and migration
 
-Initialization uses BEGIN IMMEDIATE, application_id=0x504f574c and user_version=1.
-Only a genuinely empty, unidentified database can migrate from v0 to v1.
-Initialization verifies the exact three table definitions and rejects unexpected
-schema objects, foreign application IDs, changed layouts and unknown versions.
+Initialization uses BEGIN IMMEDIATE, application_id=0x504f574c and user_version=2.
+Version 1's exact three reservation tables are unchanged. The explicit v1-to-v2
+migration first validates that original schema, then adds two job tables and
+four pinned integrity triggers. Empty v0 databases initialize both versions
+atomically. Current v2 requires the exact full schema; foreign application IDs,
+unexpected objects, altered schemas and unsupported versions fail closed.
 All DDL and version updates commit atomically. Record/history reads share a
 consistent SQLite read transaction, so concurrent commits cannot mix revisions. No destructive migration, implicit
 downgrade or schema repair is provided. Future versions need explicit reviewed

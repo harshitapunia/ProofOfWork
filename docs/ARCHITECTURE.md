@@ -48,9 +48,11 @@ approval JSON.
 Process-local single-use tickets and transaction policy, a test-only execution
 workflow, read-only RPC helpers and an offline recovery classifier are
 implemented. They are not durable operational signing or recovery. No production
-HTTP route activates them. Local reservation uniqueness is now implemented;
-worker fencing, custody, operational restart reconciliation and authenticated
-application orchestration remain open.
+HTTP route activates them. Local reservation uniqueness and
+[durable job bookkeeping/database worker fencing](VERIFICATION_JOBS.md) are
+implemented in one local SQLite database. Custody, external-side-effect fencing,
+operational transaction reconciliation and authenticated application orchestration
+remain open. Persisted jobs never restore process-local authorization tickets.
 
 ## Validation and limits
 
