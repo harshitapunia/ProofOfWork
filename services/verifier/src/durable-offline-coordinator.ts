@@ -148,7 +148,9 @@ export class DurableOfflineCoordinator {
         // Never overwrite a committed mock receipt or a newer worker's history.
         const handoff = this.store.offlineHandoffs.get(job.jobId);
         if (!handoff && job.state === "verification_running" && error instanceof AttestationError
-          && error.code === "verification_failed")
+          && error.code === "verification_failed" && error.verificationReason !== undefined
+          && ["invalid_request", "invalid_manifest", "requirements_mismatch", "evidence_mismatch",
+            "repository_mismatch", "commit_mismatch", "provenance_mismatch", "tests_failed"].includes(error.verificationReason))
           this.store.jobs.transitionJob(claim, job.revision, "verification_rejected");
         else if (!handoff || handoff.outcome === "intent")
           this.store.jobRecovery.interruptJob(job.jobId, job.identity, job.revision, this.workerId);

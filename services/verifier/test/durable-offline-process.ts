@@ -12,7 +12,9 @@ const chain = new DevnetAttestationReader("https://api.devnet.solana.com", f.ver
 const service = new VerifierService(new GitHub(githubFetch()), chain,
   { run: async () => CASES.map(c => ({ id: c.id, passed: true })) });
 const hold = async () => {
-  process.send!({ ready: true });
+  // Stop only this owned Linux crash fixture after the IPC checkpoint is delivered.
+  // SIGSTOP freezes timers too; SIGKILL from the parent is still effective.
+  process.send!({ ready: true }, () => { process.kill(process.pid, "SIGSTOP"); });
   await new Promise<void>(() => { process.on("message", () => {}); });
 };
 const coordinator = new DurableOfflineCoordinator(store, service, chain,

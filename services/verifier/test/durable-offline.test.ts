@@ -10,6 +10,7 @@ import { LifecycleStore } from "@proofwork/lifecycle";
 import { DurableOfflineCoordinator, type OfflineMockOptions } from "../src/durable-offline-coordinator.js";
 import { DevnetAttestationReader } from "../src/attestation-chain.js";
 import { buildAttestMilestoneInstruction } from "../src/attestation.js";
+import type { Failure } from "../src/errors.js";
 import { createVerifierServer } from "../src/server.js";
 import { VerifierService } from "../src/service.js";
 import { GitHub } from "../src/github.js";
@@ -28,6 +29,7 @@ async function setup(t: TestContext, options: OfflineMockOptions = { mode: "offl
   const open = () => { const s = new LifecycleStore(path); stores.push(s); return s; };
   t.after(() => { for (const s of stores) s.close(); rmSync(directory, { recursive: true, force: true }); });
   const store = open(), f = fixture();
+  let githubUnavailable = false;
   const reader = new DevnetAttestationReader("https://api.devnet.solana.com", f.verifier.toBase58(), f.rpc);
   let chainReads = 0, blockReads = 0, time = 0, runs = 0;
   let onChain = async (_n: number) => {}, onBlock = async (_n: number) => {}, onRun = async () => {}, onGithub = async (_url: string) => {};
@@ -39,7 +41,7 @@ async function setup(t: TestContext, options: OfflineMockOptions = { mode: "offl
     currentBlockHeight: 100, observedAtMs: 0, valid: true };
   const blocks = { read: async () => { await onBlock(++blockReads); return { ...observation }; } };
   const service = new VerifierService(new GitHub(async (url, init) => {
-    const response = await githubFetch()(url, init); await onGithub(String(url)); return response;
+    const response = githubUnavailable ? new Response("unavailable", { status: 503 }) : await githubFetch()(url, init); await onGithub(String(url)); return response;
   }), chain, { run: async () => {
     runs++; await onRun(); return CASES.map(c => ({ id: c.id, passed: true }));
   } });
@@ -52,6 +54,7 @@ async function setup(t: TestContext, options: OfflineMockOptions = { mode: "offl
   const revoke = () => { const j = job(); return store.jobRecovery.interruptJob(j.jobId, j.identity, j.revision, "operator"); };
   return { ...f, path, store, open, coordinator, create, expected, job, revoke, config, observation, runs: () => runs,
     chainHook: (fn: typeof onChain) => { onChain = fn; }, blockHook: (fn: typeof onBlock) => { onBlock = fn; },
+    githubUnavailable: (value: boolean) => { githubUnavailable = value; },
     githubHook: (fn: typeof onGithub) => { onGithub = fn; },
     runHook: (fn: typeof onRun) => { onRun = fn; }, clock: (n: number) => { time = n; } };
 }
@@ -221,7 +224,7 @@ for (const payer of ["verifier", "internship"] as const) {
 }
 test("trusted verification rejection is durably recorded without granting a ticket", async t => {
   const f = await setup(t);
-  const rejecting = { verify: async () => ({ status: "failed" as const, approved: false, outcomes: [],
+  const rejecting = { verify: async () => ({ status: "failed" as const, approved: false, reason: "tests_failed" as const, outcomes: [],
     startedAt: "", finishedAt: "" }) };
   await assert.rejects(f.create("worker", f.store, { mode: "offline-mock" }, rejecting).coordinate("request", f.request, TOKEN));
   assert.equal(f.job().state, "verification_rejected");
@@ -247,6 +250,8 @@ for (const phase of ["before-intent", "during-intent", "recorded"] as const) {
     const timer = setTimeout(() => child.kill("SIGKILL"), 10000);
     try {
       const [message] = await once(child, "message"); assert.equal(message.ready, true);
+      // Deliberately exceed the unchanged production gate timeout: the child must stay frozen.
+      if (phase === "during-intent") await new Promise(resolve => setTimeout(resolve, 1200));
       const done = once(child, "exit"); child.kill("SIGKILL"); await done;
       const j = f.job(), h = f.open().offlineHandoffs.get(j.jobId);
       assert.equal(j.state, "authorization_pending");
@@ -286,4 +291,45 @@ test("revocation during GitHub verification prevents starting the acceptance run
   await gate.entered; f.revoke(); gate.release(); await rejected;
   assert.equal(f.runs(), 0);
   assert.equal(f.store.offlineHandoffs.get(f.job().jobId), undefined);
+});
+
+for (const reason of ["infrastructure_failure", "request_in_progress", "github_api_failure", "github_rate_limit",
+  "missing_commit", "missing_onchain_state", "invalid_onchain_state", "runner_timeout", "runner_unavailable",
+  "runner_failure", "invalid_github_identity", undefined] as const) {
+  test("transient/unclassified verifier failure " + reason + " permits only explicit pre-authorization recovery", async t => {
+    const f = await setup(t);
+    const transient = { verify: async () => ({ status: "failed" as const, approved: false, reason, outcomes: [],
+      startedAt: "", finishedAt: "" }) };
+    await assert.rejects(f.create("worker", f.store, { mode: "offline-mock" }, transient).coordinate("request", f.request, TOKEN));
+    const failed = f.job();
+    assert.equal(failed.state, "recovery_required"); assert.equal(failed.recoveryReason, "verification_interrupted");
+    assert.equal(failed.verificationOutcome, "none"); assert.equal(f.store.offlineHandoffs.get(failed.jobId), undefined);
+    // A recoverable pre-authorization interruption still uses the same permanent operation.
+    const receipt = await f.create("replacement", f.open()).coordinate("different_creation", f.request, TOKEN);
+    assert.equal(receipt.jobId, failed.jobId);
+    assert.equal(f.store.jobs.getJob(failed.jobId)!.generation, failed.generation + 1);
+    assert.equal(f.store.offlineHandoffs.get(receipt.jobId)!.outcome, "recorded");
+  });
+}
+for (const reason of ["invalid_request", "invalid_manifest", "requirements_mismatch", "evidence_mismatch",
+  "repository_mismatch", "commit_mismatch", "provenance_mismatch", "tests_failed"] as const satisfies readonly Failure[]) {
+  test("definitive evidence rejection " + reason + " cannot restart authorization", async t => {
+    const f = await setup(t);
+    const rejecting = { verify: async () => ({ status: "failed" as const, approved: false, reason, outcomes: [],
+      startedAt: "", finishedAt: "" }) };
+    await assert.rejects(f.create("worker", f.store, { mode: "offline-mock" }, rejecting).coordinate("request", f.request, TOKEN));
+    assert.equal(f.job().state, "verification_rejected");
+    await assert.rejects(f.create("replacement", f.open()).coordinate("different_creation", f.request, TOKEN));
+    assert.equal(f.store.offlineHandoffs.get(f.job().jobId), undefined);
+  });
+}
+
+test("actual GitHub outage interrupts instead of permanently rejecting evidence", async t => {
+  const f = await setup(t); f.githubUnavailable(true);
+  await assert.rejects(f.coordinator.coordinate("first", f.request, TOKEN));
+  const j = f.job(); assert.equal(j.recoveryReason, "verification_interrupted");
+  assert.equal(j.verificationOutcome, "none"); assert.equal(f.runs(), 0);
+  f.githubUnavailable(false);
+  const receipt = await f.create("replacement", f.open()).coordinate("new_creation", f.request, TOKEN);
+  assert.equal(receipt.jobId, j.jobId); assert.equal(f.runs(), 1);
 });

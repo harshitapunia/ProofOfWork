@@ -3,12 +3,13 @@ import { PROGRAM_ID, evidenceHash, hex, key, sha256, u64 } from "./commitments.j
 import { parseManifest, suiteCaseIds } from "./manifest.js";
 import { VerifierService, type Request, type VerificationResult } from "./service.js";
 import { sumV2OutcomesPass } from "./sum-v2.js";
+import type { Failure } from "./errors.js";
 import { GitHub } from "./github.js";
 import { DockerRunner } from "./runner.js";
 import { DevnetAttestationReader, type AttestationState, type AttestationStateReader } from "./attestation-chain.js";
 
 export class AttestationError extends Error {
-  constructor(public readonly code: string) { super(code); }
+  constructor(public readonly code: string, public readonly verificationReason?: Failure) { super(code); }
 }
 function check(condition: unknown, code: string): asserts condition {
   if (!condition) throw new AttestationError(code);
@@ -51,7 +52,8 @@ function sameState(a: AttestationState, b: AttestationState): boolean {
     && Object.keys(a).length === Object.keys(b).length;
 }
 function validateResult(r: VerificationResult, s: AttestationState, request: Request, ids: readonly string[], isV2: boolean): void {
-  check(r.approved === true && r.status === "passed" && r.reason === undefined, "verification_failed");
+  if (!(r.approved === true && r.status === "passed" && r.reason === undefined))
+    throw new AttestationError("verification_failed", r.reason);
   check(isV2 ? sumV2OutcomesPass(r.outcomes)
     : Array.isArray(r.outcomes) && r.outcomes.length === ids.length
       && ids.every((id,index)=>Object.hasOwn(r.outcomes,index) && r.outcomes[index]?.id === id && r.outcomes[index]?.passed === true), "verification_failed");

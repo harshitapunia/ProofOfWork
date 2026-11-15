@@ -94,7 +94,11 @@ For an intent without outcome, listRecoveryRequired reports authorization_uncert
 while the job remains pending, or reconciliation_required after explicit interrupt.
 The handoff journal must also be inspected. A recorded mock receipt leaves the job
 authorization_pending because no on-chain action or confirmation exists.
-A verification_failed rejection is recorded as verification_rejected; other
+Only explicit evidence/specification/test rejections are recorded as
+verification_rejected. Infrastructure, GitHub availability/authentication,
+request-in-progress, runner failures and unclassified results interrupt the
+pre-authorization claim with verification_interrupted; they require a new
+explicit claim on the same permanent operation, never automatic retry. Other
 pre-handoff errors conservatively interrupt the current claim. A stale worker never
 overwrites a newer worker's history.
 
