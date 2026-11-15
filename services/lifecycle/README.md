@@ -72,12 +72,12 @@ No real database is created by importing the package.
 
 ## Schema and migration
 
-Initialization uses BEGIN IMMEDIATE, application_id=0x504f574c and user_version=3.
+Initialization uses BEGIN IMMEDIATE, application_id=0x504f574c and user_version=4.
 Version 1's exact three reservation tables are unchanged. The explicit v1-to-v2
 migration first validates that original schema, then adds two job tables and
 four pinned integrity triggers. V3 validates the exact v2 schema and adds one append-only offline handoff journal
 and two integrity triggers without changing v2 job histories. Empty v0 databases
-initialize all versions atomically. Current v3 requires the exact full schema; foreign application IDs,
+initialize all versions atomically. Current v4 requires the exact full schema; foreign application IDs,
 unexpected objects, altered schemas and unsupported versions fail closed.
 All DDL and version updates commit atomically. Record/history reads share a
 consistent SQLite read transaction, so concurrent commits cannot mix revisions. No destructive migration, implicit
@@ -227,3 +227,11 @@ References: [Node 24 SQLite](https://nodejs.org/download/release/v24.14.0/docs/a
 See [durable offline authorization](../../docs/OFFLINE_AUTHORIZATION.md) for the
 server-internal composition, journal API semantics and conservative crash recovery.
 Journal metadata grants no signing authority.
+
+## Offline transaction intents (schema v4)
+
+[Transaction intent design and APIs](../../docs/TRANSACTION_INTENTS.md) add immutable
+offline preparation bookkeeping to the same database. V4 validates the exact v3
+schema and adds two tables/four integrity triggers while retaining all prior
+records. Direct metadata assertions grant no authorization. Created/uncertain
+intents remain consumed and the separate preparer never resumes an existing row.

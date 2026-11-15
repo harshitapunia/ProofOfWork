@@ -50,7 +50,7 @@ jobs:
       - run: npm --prefix services/verifier run check
       - run: npm --prefix services/verifier run build
       - run: npm --prefix services/verifier test
-      - name: Validate lifecycle readers, SQLite reservations and durable job fencing
+      - name: Validate lifecycle storage, job fencing and offline transaction intents
         run: |
           npm --prefix services/lifecycle run check
           npm --prefix services/lifecycle test
