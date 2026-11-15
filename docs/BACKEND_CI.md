@@ -151,3 +151,11 @@ separate-process crash/concurrency tests through the lifecycle test glob. The
 verifier glob runs actual unsigned-attestation preparation tests and crash
 checkpoints. All six jobs, pins, permissions and security gates remain unchanged.
 See [transaction intent design](TRANSACTION_INTENTS.md).
+
+## Offline signer architecture tests
+
+The existing verifier job also executes real in-memory Ed25519 dual-role tests,
+policy provenance/replay/expiry tests, durable fencing/intent integration and owned
+process crash tests. Test private keys remain only in memory. No credentials,
+operational signing, transport or new CI job is introduced. See
+[signer architecture](SIGNER_ARCHITECTURE.md).

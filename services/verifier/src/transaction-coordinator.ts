@@ -12,6 +12,13 @@ export interface MockMessageBoundary {
   readonly publicKey: string;
   acceptAuthorizedMessage(message: Uint8Array): Promise<void>;
 }
+/** Explicit test-only boundary; only original policy-consumed provenance is accepted. */
+export interface PolicySimulationBoundary {
+  readonly mode: "offline-policy-simulation";
+  readonly publicKey: string;
+  readonly feePayer: string;
+  acceptPolicyConsumedMessage(message: unknown): Promise<void>;
+}
 /** Trusted server-local checkpoints, never request callbacks or authorization substitutes. */
 export interface CoordinationGuard {
   assertCurrent(): void;
@@ -31,7 +38,7 @@ export class AttestationTransactionCoordinator {
   readonly #policy: AttestationTransactionPolicy;
   readonly #config: Readonly<TransactionPolicyConfig>;
   constructor(service: Pick<VerifierService, "verify">, private readonly chain: AttestationStateReader,
-    config: TransactionPolicyConfig, private readonly boundary: MockMessageBoundary,
+    config: TransactionPolicyConfig, private readonly boundary: MockMessageBoundary | PolicySimulationBoundary,
     private readonly blockhashes: TrustedBlockhashSource = new DevnetBlockhashSource(),
     now: () => number = () => performance.now(), private readonly guard?: CoordinationGuard) {
     this.#config = Object.freeze({ ...config });
@@ -41,7 +48,9 @@ export class AttestationTransactionCoordinator {
   }
   /** Rechecks the mock's identity immediately before handoff; no payer signing authority is implied. */
   private checkBoundary(): void {
-    if (this.boundary.mode !== "offline-mock" || this.boundary.publicKey !== this.#config.verifier)
+    if (this.boundary.publicKey !== this.#config.verifier
+      || (this.boundary.mode !== "offline-mock" && (this.boundary.mode !== "offline-policy-simulation"
+        || this.boundary.feePayer !== this.#config.feePayer)))
       throw new CoordinatorError("incorrect_mock_signer");
   }
   /**
@@ -73,7 +82,9 @@ export class AttestationTransactionCoordinator {
     if (!message.equals(expectedMessage)) throw new CoordinatorError("transaction_substitution");
     this.checkBoundary();
     // No intervening await or externally supplied bytes between final checks and the mock call.
-    await this.boundary.acceptAuthorizedMessage(Buffer.from(message));
+    if (this.boundary.mode === "offline-policy-simulation")
+      await this.boundary.acceptPolicyConsumedMessage(message); // Original WeakMap-branded result, not an arbitrary byte copy.
+    else await this.boundary.acceptAuthorizedMessage(Buffer.from(message));
     this.guard?.assertCurrent();
   }
 }

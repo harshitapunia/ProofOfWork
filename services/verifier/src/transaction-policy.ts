@@ -31,6 +31,26 @@ interface Record {
   state: AttestationState; wire: Buffer; message: Buffer;
   blockhash: string; lastValidBlockHeight: number; height: number; issued: number;
 }
+/** Internal one-shot provenance for the ORIGINAL buffer returned by consume; never serializable authority. */
+export interface OfflinePolicyMessage {
+  readonly message: Buffer;
+  readonly operationKey: string; readonly milestone: string; readonly programId: string;
+  readonly verifier: string; readonly feePayer: string; readonly blockhash: string;
+  readonly lastValidBlockHeight: number; readonly observedBlockHeight: number;
+  readonly expiresAtMs: number;
+  assertFresh(): void;
+  revalidate(): Promise<void>;
+}
+const offlineMessages = new WeakMap<object, OfflinePolicyMessage>();
+/** Only a genuine, unmutated consume result works. Clones, database rows and mock receipts never do. */
+export function takeOfflinePolicyMessage(input: unknown): OfflinePolicyMessage {
+  requirePolicy(Buffer.isBuffer(input), "invalid_consumed_policy_message");
+  const record = offlineMessages.get(input);
+  offlineMessages.delete(input); // Burn before checks/awaits, including mutation and expiry failures.
+  requirePolicy(record && record.message.equals(input), "invalid_consumed_policy_message");
+  record.assertFresh();
+  return Object.freeze({ ...record, message: Buffer.from(record.message) });
+}
 /** Compares every public binding and snapshot independent of object-property insertion order. */
 function sameState(a: AttestationState, b: AttestationState): boolean {
   return JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
@@ -142,6 +162,21 @@ export class AttestationTransactionPolicy {
     const record = this.#approvals.get(approval);
     requirePolicy(record, "invalid_transaction_authorization");
     this.#approvals.delete(approval); // Burn before awaits, including on failures.
+    const observation = await this.validateConsumedRecord(record);
+    const message = Buffer.from(record.message);
+    offlineMessages.set(message, Object.freeze({ message: Buffer.from(record.message),
+      operationKey: "devnet:" + PROGRAM_ID.toBase58() + ":" + record.state.milestone,
+      milestone: record.state.milestone, programId: PROGRAM_ID.toBase58(),
+      verifier: this.#config.verifier, feePayer: this.#config.feePayer,
+      blockhash: record.blockhash, lastValidBlockHeight: record.lastValidBlockHeight,
+      observedBlockHeight: observation.currentBlockHeight, expiresAtMs: record.issued + this.#config.maxAgeMs,
+      assertFresh: () => this.fresh(record.issued),
+      revalidate: async () => { await this.validateConsumedRecord(record); },
+    }));
+    return message;
+  }
+  /** Same original deadline, state, wire and lease checks; revalidation never issues or renews an approval. */
+  private async validateConsumedRecord(record: Record): Promise<BlockhashObservation> {
     this.fresh(record.issued);
     const current = structuredClone(await this.chain.read(record.state.milestone));
     requirePolicy(sameState(record.state, current), "changed_onchain_bindings");
@@ -154,6 +189,6 @@ export class AttestationTransactionPolicy {
     requirePolicy(expected.serializeMessage().equals(record.message)
       && expected.serialize({ requireAllSignatures: false, verifySignatures: false }).equals(record.wire), "transaction_substitution");
     this.fresh(record.issued); this.fresh(o.observedAtMs);
-    return Buffer.from(record.message); // Private snapshot; no caller transaction object is reused.
+    return o;
   }
 }
