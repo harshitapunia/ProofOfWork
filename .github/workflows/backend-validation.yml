@@ -49,7 +49,7 @@ jobs:
       - run: npm --prefix services/verifier ci --ignore-scripts
       - run: npm --prefix services/verifier run check
       - run: npm --prefix services/verifier run build
-      - name: Validate verifier, offline signatures and execution reconciliation
+      - name: Validate verifier, offline execution and operational protocol contracts
         run: npm --prefix services/verifier test
       - name: Validate lifecycle storage, fencing, v5 execution ledger and migrations
         run: |
