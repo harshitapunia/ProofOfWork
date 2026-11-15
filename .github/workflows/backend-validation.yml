@@ -49,9 +49,9 @@ jobs:
       - run: npm --prefix services/verifier ci --ignore-scripts
       - run: npm --prefix services/verifier run check
       - run: npm --prefix services/verifier run build
-      - name: Validate verifier and ephemeral offline dual-signature authorization
+      - name: Validate verifier, offline signatures and execution reconciliation
         run: npm --prefix services/verifier test
-      - name: Validate lifecycle storage, job fencing and offline transaction intents
+      - name: Validate lifecycle storage, fencing, v5 execution ledger and migrations
         run: |
           npm --prefix services/lifecycle run check
           npm --prefix services/lifecycle test

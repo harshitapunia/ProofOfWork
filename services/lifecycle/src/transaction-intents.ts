@@ -66,7 +66,7 @@ function payer(value: string, b: JobBindings): string {
   return value;
 }
 interface Record { value: TransactionIntent; history: readonly IntentHistoryEntry[]; lastDigest: string }
-function load(db: DatabaseSync, id: string): Record | undefined {
+export function load(db: DatabaseSync, id: string): Record | undefined {
   const row = db.prepare("SELECT * FROM transaction_intents WHERE intent_id=?").get(id);
   if (!row) return undefined;
   try {

@@ -22,7 +22,7 @@ test("genuine v3 fixture provenance matches approved main source exactly after i
   }
 });
 for (const version of [1, 2, 3] as const) {
-  test("real v" + version + "-to-v4 migration preserves every historical row and hash", async t => {
+  test("real v" + version + "-to-v5 migration preserves every historical row and hash", async t => {
     const x = temp(t), b = bindings();
     const old = version === 1 ? new V1Store(x.path) : version === 2 ? new V2Store(x.path) : new V3Store(x.path);
     const reserved = old.reserveInternship(b.sponsor, 9007199254740993n);
@@ -41,7 +41,7 @@ for (const version of [1, 2, 3] as const) {
     const before = tables.map(name => raw.prepare("SELECT * FROM " + name + " ORDER BY rowid").all());
     assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version, version);
     const current = x.store();
-    assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version, 4);
+    assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version, 5);
     assert.deepEqual(tables.map(name => raw.prepare("SELECT * FROM " + name + " ORDER BY rowid").all()), before);
     assert.equal(current.reserveInternship(b.sponsor).value, 9007199254740994n);
     assert.equal(current.transactionIntents.listOutstandingIntents().entries.length, 0);
@@ -108,7 +108,7 @@ test("failed history append rolls back head mutation and preserves permanent ope
   assert.deepEqual(s.transactionIntents.getIntent(a.intentId), a);
   assert.equal(s.transactionIntents.createIntent(claim, job.revision, "alias", job.bindings.sponsor).created, false);
 });
-test("current v4 exact schema detects dropped intent triggers on restart", t => {
+test("current v5 exact schema detects dropped intent triggers on restart", t => {
   const x = temp(t); x.store().close(); x.raw().exec("DROP TRIGGER transaction_intent_no_delete");
   assert.throws(() => x.store(), error("schema_mismatch"));
 });
