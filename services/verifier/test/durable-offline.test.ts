@@ -30,7 +30,7 @@ async function setup(t: TestContext, options: OfflineMockOptions = { mode: "offl
   const store = open(), f = fixture();
   const reader = new DevnetAttestationReader("https://api.devnet.solana.com", f.verifier.toBase58(), f.rpc);
   let chainReads = 0, blockReads = 0, time = 0, runs = 0;
-  let onChain = async (_n: number) => {}, onBlock = async (_n: number) => {}, onRun = async () => {};
+  let onChain = async (_n: number) => {}, onBlock = async (_n: number) => {}, onRun = async () => {}, onGithub = async (_url: string) => {};
   const chain = { read: async (id: string) => { await onChain(++chainReads); return reader.read(id); } };
   const config = { verifier: f.verifier.toBase58(), feePayer: new PublicKey(f.i.subarray(8, 40)).toBase58(),
     maxAgeMs: 5000, minRemainingBlockHeights: 10 };
@@ -38,7 +38,9 @@ async function setup(t: TestContext, options: OfflineMockOptions = { mode: "offl
     blockhash: new PublicKey(Buffer.alloc(32, 177)).toBase58(), lastValidBlockHeight: 200,
     currentBlockHeight: 100, observedAtMs: 0, valid: true };
   const blocks = { read: async () => { await onBlock(++blockReads); return { ...observation }; } };
-  const service = new VerifierService(new GitHub(githubFetch()), chain, { run: async () => {
+  const service = new VerifierService(new GitHub(async (url, init) => {
+    const response = await githubFetch()(url, init); await onGithub(String(url)); return response;
+  }), chain, { run: async () => {
     runs++; await onRun(); return CASES.map(c => ({ id: c.id, passed: true }));
   } });
   const create = (worker = "worker_a", s = store, o = options, v: Pick<VerifierService, "verify"> = service) =>
@@ -50,6 +52,7 @@ async function setup(t: TestContext, options: OfflineMockOptions = { mode: "offl
   const revoke = () => { const j = job(); return store.jobRecovery.interruptJob(j.jobId, j.identity, j.revision, "operator"); };
   return { ...f, path, store, open, coordinator, create, expected, job, revoke, config, observation, runs: () => runs,
     chainHook: (fn: typeof onChain) => { onChain = fn; }, blockHook: (fn: typeof onBlock) => { onBlock = fn; },
+    githubHook: (fn: typeof onGithub) => { onGithub = fn; },
     runHook: (fn: typeof onRun) => { onRun = fn; }, clock: (n: number) => { time = n; } };
 }
 
@@ -274,4 +277,13 @@ test("HTTP server exposes neither signing nor durable authorization routes", asy
     }
     assert.equal(calls, 0);
   } finally { await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())); }
+});
+
+test("revocation during GitHub verification prevents starting the acceptance runner", async t => {
+  const f = await setup(t), gate = barrier();
+  f.githubHook(async url => { if (url.endsWith("/user")) await gate.wait(); });
+  const pending = f.coordinator.coordinate("first", f.request, TOKEN), rejected = assert.rejects(pending);
+  await gate.entered; f.revoke(); gate.release(); await rejected;
+  assert.equal(f.runs(), 0);
+  assert.equal(f.store.offlineHandoffs.get(f.job().jobId), undefined);
 });

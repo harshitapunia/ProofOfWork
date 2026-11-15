@@ -99,7 +99,7 @@ export class DurableOfflineCoordinator {
       return value;
     } };
     const service: Pick<VerifierService, "verify"> = { verify: async (value, token) => {
-      current(); const result = await this.service.verify(value, token); current(); return result;
+      current(); const result = await this.service.verify(value, token, current); current(); return result;
     } };
     const blockhashes: TrustedBlockhashSource = { read: async () => {
       current(); const result = await this.blockhashes.read(); current(); return result;

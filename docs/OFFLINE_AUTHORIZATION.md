@@ -36,9 +36,11 @@ This component does not grant payer or verifier custody.
    single-use policy checks. The coordinator checks the durable claim after each
    awaited composition stage. Chain/blockhash adapters check before and after
    every wrapped read. The service adapter checks before/after the complete
-   verification call. Internal GitHub/sandbox work may finish after revocation;
-   its result cannot advance the job or handoff. Cancellation of internal
-   verification work is not promised.
+   verification call and passes a trusted synchronous checkpoint through the
+   existing service at every chain/provenance/source/runner stage. An in-flight
+   dependency may finish after revocation, but the next stage cannot start and
+   its result cannot advance the job or handoff. Cancellation inside an in-flight
+   GitHub/sandbox dependency is not promised.
 6. The boundary receives only the exact policy-consumed message, defensively
    copied by the existing coordinator. No request proposal or approved JSON enters it.
 7. Record a permanent intent with the message SHA-256 under current identity,
