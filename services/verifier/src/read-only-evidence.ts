@@ -169,6 +169,7 @@ export function reconcileOfflineReadEvidence(planInput:unknown,bundlesInput:unkn
  for(const e of plan.events)if(!observations.some(o=>o.sourceId===e.sourceId&&o.eventId===e.eventId))reasons.push("configured_source_missing");
  let classification:ReconciliationClassification="reconciliation_required";
  const facts=observations.flatMap(o=>o.status?[o.status]:[]);
+ if(facts.some(s=>s.outcome==="failure"))reasons.push("execution_failure_claim");
  const factConflict=facts.some((a,n)=>facts.slice(n+1).some(b=>a.outcome!==b.outcome||a.errorCode!==b.errorCode||a.transactionSlot!==b.transactionSlot));
  if(reasons.includes("duplicate_event_identity")||factConflict||observations.some(o=>o.classification==="conflicting_evidence")){
   classification="conflicting_evidence";reasons.push(factConflict?"cross_source_transaction_conflict":"retained_source_conflict");

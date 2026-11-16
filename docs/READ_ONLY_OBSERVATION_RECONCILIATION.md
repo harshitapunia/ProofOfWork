@@ -67,7 +67,7 @@ Prior events are a bounded caller-supplied snapshot, not a durable replay journa
 
 An incomplete source keeps its own reason/classification; the aggregate holds reconciliation rather than treating another source as decisive. A single missing source yields missing evidence; a missing source alongside usable evidence holds reconciliation.
 
-The aggregate uses the weakest corroborated transaction commitment across selected sources. Detail commitment regression holds reconciliation. Stronger detail evidence cannot upgrade an earlier weaker status. A finalized failure never becomes success. Timeout, null lookup, history loss and expiry do not prove non-execution, authorize retry or release uniqueness.
+The aggregate uses the weakest corroborated transaction commitment across selected sources. Detail commitment regression holds reconciliation. Stronger detail evidence cannot upgrade an earlier weaker status. A finalized failure never becomes success. The aggregate reasons retain execution_failure_claim from inspected status claims, including processed/confirmed failures and partial corroboration; finality and reconciliation holds stay unchanged. Timeout, null lookup, history loss and expiry do not prove non-execution, authorize retry or release uniqueness.
 
 Every result permanently sets rpcAuthenticated, onChainStateVerified, operationalStateMutationAuthorized, submissionAuthorized, retryAuthorized, reservationReleaseAuthorized, settlementPermission and operationalUncertaintyClearAuthorized to false, signingAuthorization to not_granted, and reconciliationRequired to true. Even matching_finalized_candidate grants no authority.
 

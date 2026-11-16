@@ -26,7 +26,7 @@ test("finalized execution failure remains failure and never reads accounts",asyn
  const x=observationFixture();Object.assign((x.bundle.status as any).evidence,{outcome:"failure",errorCode:"InstructionError"});
  Object.assign(x.bundle.transaction!,{outcome:"failure",errorCode:"InstructionError"});
  const calls:string[]=[];const r=await adapter(x,mockSource(x.bundle,calls)).observe(x.plan);
- assert.equal(r.classification,"finalized_failure");assert.deepEqual(calls,["status","transaction"]);nonAuthorizing(r);
+ assert.equal(r.classification,"finalized_failure");assert(r.reasons.includes("execution_failure_claim"));assert.deepEqual(calls,["status","transaction"]);nonAuthorizing(r);
 });
 for(const reason of ["rpc_timeout","null_lookup","history_missing"])test(reason+" is missing evidence, never observed failure",()=>{
  const x=observationFixture();(x.bundle.status as any).evidence={kind:"missing",reason};
@@ -37,24 +37,25 @@ for(const reason of ["null_lookup","history_missing"])test("missing transaction 
  const r=x.reconcile();assert.equal(r.classification,"reconciliation_required");assert.equal(r.observations[0]!.classification,"incomplete_evidence");
  assert.equal(r.observations[0]!.reasons[0],reason);nonAuthorizing(r);
 });
-const txMutations:[string,(x:ReturnType<typeof observationFixture>)=>void][]=[
- ["wrong signature",x=>{(x.bundle.transaction as any).transactionId="1".repeat(64);}],
- ["changed wire signature",x=>{const d=Buffer.from((x.bundle.transaction as any).wireBase64,"base64");d[5]=d[5]!^1;(x.bundle.transaction as any).wireBase64=d.toString("base64");}],
- ["wire digest",x=>{(x.bundle.transaction as any).wireDigest="af".repeat(32);}],
- ["message digest",x=>{(x.bundle.status as any).evidence.messageDigest="af".repeat(32);}],
- ["genesis context",x=>{(x.bundle.status as any).provenance.genesisHash=PublicKey.default.toBase58();}],
- ["source identity",x=>{(x.bundle.status as any).provenance.sourceId="other";}],
- ["event identity",x=>{(x.bundle.status as any).provenance.eventId="other";}],
- ["request identity",x=>{(x.bundle.transaction as any).provenance.requestId="other";}],
- ["forged authentication",x=>{(x.bundle.status as any).authenticated=true;}],
- ["partial response",x=>{delete (x.bundle.transaction as any).wireDigest;}],
- ["status context mismatch",x=>{(x.bundle.status as any).evidence.contextSlot="999";}],
- ["stale account slot",x=>{(x.bundle.accounts as any).provenance.contextSlot="119";}],
- ["stale height",x=>{(x.bundle.status as any).currentBlockHeight="90";}],
- ["noncanonical height",x=>{(x.bundle.status as any).currentBlockHeight="0150";}],
+const txMutations:[string,string,(x:ReturnType<typeof observationFixture>)=>void][]=[
+ ["wrong signature","transaction_identity_mismatch",x=>{(x.bundle.transaction as any).transactionId="1".repeat(64);}],
+ ["changed wire signature","transaction_identity_mismatch",x=>{const d=Buffer.from((x.bundle.transaction as any).wireBase64,"base64");d[5]=d[5]!^1;(x.bundle.transaction as any).wireBase64=d.toString("base64");}],
+ ["wire digest","transaction_identity_mismatch",x=>{(x.bundle.transaction as any).wireDigest="af".repeat(32);}],
+ ["message digest","invalid_source_result",x=>{(x.bundle.status as any).evidence.messageDigest="af".repeat(32);}],
+ ["genesis context","invalid_source_result",x=>{(x.bundle.status as any).provenance.genesisHash=PublicKey.default.toBase58();}],
+ ["source identity","source_context_mismatch",x=>{(x.plan.snapshot.sourceIds as string[]).push("other");(x.bundle.status as any).provenance.sourceId="other";}],
+ ["event identity","source_context_mismatch",x=>{(x.bundle.status as any).provenance.eventId="other";}],
+ ["request identity","source_context_mismatch",x=>{(x.bundle.transaction as any).provenance.requestId="other";}],
+ ["forged authentication","invalid_offline_read_data",x=>{(x.bundle.status as any).authenticated=true;}],
+ ["partial response","invalid_offline_read_data",x=>{delete (x.bundle.transaction as any).wireDigest;}],
+ ["status context mismatch","invalid_source_result",x=>{(x.bundle.status as any).evidence.contextSlot="999";}],
+ ["stale account slot","source_context_mismatch",x=>{(x.bundle.accounts as any).provenance.contextSlot="119";}],
+ ["stale height","stale_block_height",x=>{(x.bundle.status as any).currentBlockHeight="90";}],
+ ["noncanonical height","invalid_source_result",x=>{(x.bundle.status as any).currentBlockHeight="0150";}],
 ];
-for(const [name,mutate] of txMutations)test("rejects "+name+" in observed evidence",()=>{
- const x=observationFixture();mutate(x);const r=x.reconcile();assert.notEqual(r.classification,"matching_finalized_candidate");nonAuthorizing(r);
+for(const [name,reason,mutate] of txMutations)test("rejects "+name+" in observed evidence",()=>{
+ const x=observationFixture();mutate(x);const r=x.reconcile();assert.equal(r.classification,"reconciliation_required");
+ assert.equal(r.observations[0]!.classification,"incomplete_evidence");assert.equal(r.observations[0]!.reasons[0],reason);nonAuthorizing(r);
 });
 for(const [name,field] of [["program","programId"],["milestone","milestone"],["submission","submission"],["student","student"],["verifier","verifier"]] as const)
  test("canonical protocol rejects plan changed "+name+" binding",()=>{
@@ -241,4 +242,17 @@ test("a complete bundle cannot conceal a claimed interrupted read",()=>{
  const x=observationFixture();(x.bundle as any).interruption="status_timeout";
  const r=x.reconcile();assert.equal(r.classification,"reconciliation_required");
  assert.equal(r.observations[0]!.reasons[0],"inconsistent_read_interruption");nonAuthorizing(r);
+});
+
+for(const finality of ["processed","confirmed"] as const)test("aggregate preserves "+finality+" failure claim without changing finality or granting authority",()=>{
+ const x=observationFixture();
+ Object.assign((x.bundle.status as any).evidence,{finality,outcome:"failure",errorCode:"InstructionError"});
+ Object.assign(x.bundle.transaction!,{commitment:finality,outcome:"failure",errorCode:"InstructionError"});
+ const r=x.reconcile();assert.equal(r.classification,finality==="processed"?"provisional_observation":"confirmed_observation");
+ assert(r.reasons.includes("execution_failure_claim"));assert.equal(r.observations[0]!.status!.outcome,"failure");nonAuthorizing(r);
+});
+test("partial corroboration retains inspected failure claim while holding reconciliation",()=>{
+ const x=observationFixture();Object.assign((x.bundle.status as any).evidence,{finality:"confirmed",outcome:"failure",errorCode:"InstructionError"});
+ (x.bundle as any).transaction=null;const r=x.reconcile();
+ assert.equal(r.classification,"reconciliation_required");assert(r.reasons.includes("execution_failure_claim"));nonAuthorizing(r);
 });
