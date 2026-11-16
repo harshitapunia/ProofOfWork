@@ -6,6 +6,7 @@ import {join} from "node:path";
 import {DatabaseSync} from "node:sqlite";
 import {LifecycleStore,INTENT_FORMAT} from "@proofwork/lifecycle";
 import {PublicKey} from "@solana/web3.js";
+import {deriveVaultAuthority} from "@proofwork/finance-client";
 import {secureFixture} from "./secure-integration-helpers.js";
 import {TOKEN,githubFetch} from "./helpers.js";
 import {barrier,ephemeral} from "./signing-helpers.js";
@@ -98,6 +99,19 @@ for(const role of ["verifier","payer"] as const)test("wrong "+role+" identity is
  const f=await setup(t),wrong=ephemeral(role==="payer"?"fee_payer":"verifier");
  const sim=new OfflineDualSignatureSimulation(role==="verifier"?wrong.provider:f.verifier.provider,role==="payer"?wrong.provider:f.payer.provider,f.now);
  assert.throws(()=>f.create(f.store,f.observationConfig,sim));assert.equal(f.runs(),0);assert.equal(f.rows().length,0);
+});
+for(const invalid of ["verifier","payer","malformed","off_curve"] as const)test("invalid observation authority "+invalid+" is rejected before any durable reservation",async t=>{
+ const f=await setup(t);
+ const authority=invalid==="verifier"?f.config.policy.verifier:invalid==="payer"?f.config.policy.feePayer
+  :invalid==="off_curve"?deriveVaultAuthority(f.state.milestone)[0].toBase58():"invalid";
+ assert.throws(()=>new SecureOfflineAttestationIntegration(f.store,f.service,f.chain,f.source,
+  {...f.config,observationAuthority:authority},f.simulation,f.now,f.observationConfig));
+ const db=new DatabaseSync(f.path,{readOnly:true});try{
+  for(const table of ["verification_jobs","transaction_intents","execution_attempts"])
+   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM "+table).get()!.count,0,table);
+ }finally{db.close();}
+ assert.equal(f.runs(),0);assert.equal(f.verifier.signatures.length,0);assert.equal(f.payer.signatures.length,0);
+ if(invalid==="verifier")assert.equal((await f.integration.investigate(f.request,TOKEN)).code,"matching_finalized_candidate");
 });
 for(const variant of ["same","new_request","new_instance","restart"] as const)test("permanent duplicate cannot resume through "+variant,async t=>{
  const f=await setup(t);const first=await f.integration.investigate(f.request,TOKEN);assert.equal(first.code,"matching_finalized_candidate");

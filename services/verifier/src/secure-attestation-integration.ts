@@ -1,4 +1,6 @@
 import { LifecycleStore, LifecycleError, type ExecutionAttempt, type JobClaim, type VerificationJob } from "@proofwork/lifecycle";
+import { PublicKey } from "@solana/web3.js";
+import { key } from "./commitments.js";
 import { DurableOfflineCoordinator, OfflineAuthorizationError, type OfflineCoordinationAuditEvent } from "./durable-offline-coordinator.js";
 import { VerifierService, parseRequest, type VerificationResult } from "./service.js";
 import { AttestationError } from "./attestation.js";
@@ -70,6 +72,10 @@ export class SecureOfflineAttestationIntegration {
     check(c.mode === "offline-only" && typeof c.workerId === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(c.workerId)
       && typeof c.observationAuthority === "string" && service instanceof VerifierService && simulation instanceof OfflineDualSignatureSimulation);
     const policy = record(c.policy, ["verifier", "feePayer", "maxAgeMs", "minRemainingBlockHeights"]);
+    // Match the existing v5 authority predicate before authorization or permanent reservations.
+    const authority = key(c.observationAuthority);
+    check(PublicKey.isOnCurve(authority.toBytes()) && c.observationAuthority !== policy.verifier
+      && c.observationAuthority !== policy.feePayer, "invalid_observation_authority");
     this.#config = freeze(structuredClone({ ...c, policy }) as OfflineIntegrationConfig);
     // Reuse the existing coordinator's config/identity validation without creating a job.
     new DurableOfflineCoordinator(store, service, chain, this.#config.policy, c.workerId, blockhashes, now,

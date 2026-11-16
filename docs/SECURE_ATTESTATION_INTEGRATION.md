@@ -27,6 +27,8 @@ The token is a separate trusted caller input, never a request-selected signer
 or persisted/returned credential. There is no HTTP registration or environment
 loader. Constructor dependencies are trusted composition code, not sandboxed
 application requests; they must remain offline fixtures in this phase.
+The observation authority must be a canonical on-curve public key distinct from
+both role signers; this existing v5 predicate is checked before any durable work.
 
 An optional trailing, synchronous `DurableOfflineCoordinator` audit callback
 exposes defensive copies of public progress only: resolved job, verification

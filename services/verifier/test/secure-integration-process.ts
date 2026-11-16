@@ -1,5 +1,6 @@
 /** Owned TEST child. Only synthetic request/public identities cross IPC; private key closures never do. */
 import {writeSync} from "node:fs";
+import assert from "node:assert/strict";
 import {LifecycleStore, type VerificationJobs, type TransactionIntents, type ExecutionAttempts} from "@proofwork/lifecycle";
 import {secureFixture} from "./secure-integration-helpers.js";
 import {TOKEN} from "./helpers.js";
@@ -37,7 +38,7 @@ process.send!({ready:true,config:f.config,state,request:f.request});
 process.once("message",async()=>{
  try{
   const result=await f.integration.investigate(f.request,TOKEN);
-  if(window==="after_matching")stop();
+  if(window==="after_matching"){assert.equal(result.code,"matching_finalized_candidate");stop();}
   process.send!({ok:true,result});
  }catch{process.send!({ok:false,code:"child_failure"});}
  finally{store.close();process.disconnect();}
