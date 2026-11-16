@@ -10,3 +10,7 @@ export type { ExecutionAttempt, ExecutionEvidence, ExecutionFacts, ExecutionPhas
 export type { ExecutionAttempts, ExecutionRecoveryControl, ExecutionControlFence, ExecutionRef, ExecutionHistory } from "./execution-attempts.js";
 export { createOfflineTestExecutionObserver, offlineTestStatement } from "./execution-observations.js";
 export type { OfflineTestEnvelope, OfflineTestObservationSource, OfflineTestMessageValidator } from "./execution-observations.js";
+
+// Pure data validation only; neither export creates authorization or worker claims.
+export { exact as assertOwnDataFields } from "./common.js";
+export { publicBindings as validateJobBindings } from "./job-model.js";

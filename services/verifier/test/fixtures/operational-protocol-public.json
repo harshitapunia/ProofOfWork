@@ -1,0 +1,40 @@
+{
+  "provenance": {
+    "purpose": "OFFLINE PUBLIC TEST VECTOR ONLY",
+    "base": "f53bd1bcbdb7d6638c7f4a4056b1e507fdb2ef6d",
+    "helper": "services/verifier/test/execution-helpers.ts",
+    "helperSha256": "efa9a8c9fb4de74ed7d09fac41eada0e7b82028cdae3005fbc508a1e26737b77",
+    "note": "Captured public bytes from existing ephemeral in-memory test helper. No private key, seed, wallet or operational identity is stored."
+  },
+  "bindings": {
+    "cluster": "devnet",
+    "genesisHash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+    "programId": "J2FkqDuuuHT14gxjVMhSryrX3Bs4Knct45NMLA79dGdZ",
+    "sponsor": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+    "internshipId": "1",
+    "internship": "2P94uEQEgWp7GMzDSjXkfutdDkmTSxiK7kRxLEsfHCRF",
+    "milestoneId": "1",
+    "milestone": "2yyYhBZRERhPQsb8vvQJtETP17B14J1ThUwPVKsRynYJ",
+    "submission": "7iFzqzDrR1pr3etmvNBfe1WPyi4gtgQXDfftpr8WUuou",
+    "student": "4NwnA4HWZurKyXWNowJwYmb9CwX4gBKzwQKov1ExMf8M",
+    "verifier": "Bi9qrJkPfiiMtguVvhodSy9NxQSxGUjifcp5GWyDrxU3",
+    "requirementsHash": "d29c5e53c845544253d913548f4949e16d0db6d28491f099a7afb2e9f5b38a67",
+    "evidenceHash": "e14341d0167724781049df3ca1a36a55b6cd88b929f3be218d1a7976e4284462",
+    "repositoryId": "1001",
+    "contributorId": "2002",
+    "commit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "verificationSpecHash": "d29c5e53c845544253d913548f4949e16d0db6d28491f099a7afb2e9f5b38a67"
+  },
+  "jobId": "d9079856-884b-42c2-833f-10b4834fe1a5",
+  "jobIdentity": "b3b7ab1f4b4a93e690ddf645f58c1427bb29b39efd37c90f38a1a6bc1fecd82f",
+  "intentId": "eaa53dc3-8403-486d-8388-cb7e306f4fac",
+  "intentIdentity": "039acb181b1050986acb013fa277144a8e20870ff434bb44b47242de41b048f7",
+  "snapshotDigest": "473626931649e2fb6576fe14ce629453c5c0f974ec56825672059ec08280297f",
+  "messageBase64": "AgEDBmKpNAEEnBLVWrWDdN6rYUd3CZ5JLtUxCFbiDLtUP38gnx+uLiiE3sarQ1g6tI0D5wYKG5w+qSFGfF+jWHf2OwQddCZElGuboAWXsrWjsjpiwJgZQXq3pg0+fOgrbLSWaxSHlh4BYctXlPjMNKe3Y05EdQelJXH66HvTiTmgTH3qY7fkas2Goq9vFG6Ct/y7yXzvXRQAVsEdz+Dak4yzsRj86PFhpz4QNoqyAG+0CwtQd/2cm0y6cG/U2u56wq2TBLGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxAQUEAQMCBGjlpwCWQNPtlzIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy0pxeU8hFVEJT2RNUj0lJ4W0NttKEkfCZp6+y6fWzimfhQ0HQFnckeBBJ3zyho2pVts2IuSnzviGNGnl25ChEYg==",
+  "messageDigest": "af9ea20a629860120d43f20a3d171aa4b24ba8570c8a3e6b8f15ff69daefb43e",
+  "blockhash": "CxeKLJRofna6h2GqCsjdVwc2D7EdDFX8uDy9KGw3Ey68",
+  "wireBase64": "At3iATwrEvYwxqPQ9w7Ah6LE8Hs7i/VStwjL9ydBN2wzg8oiC4Tfrrfv2SD1E6BxUEKJe7iHnByiHTLnzTgaOA8L/kdwdPno6Le783l1e6NjRbCdP9yUpdB5tgLCl9cTBJmUZQXrVo8vp1oYWtIgUJB8PnnzW9s70ryBxGRWAwsFAgEDBmKpNAEEnBLVWrWDdN6rYUd3CZ5JLtUxCFbiDLtUP38gnx+uLiiE3sarQ1g6tI0D5wYKG5w+qSFGfF+jWHf2OwQddCZElGuboAWXsrWjsjpiwJgZQXq3pg0+fOgrbLSWaxSHlh4BYctXlPjMNKe3Y05EdQelJXH66HvTiTmgTH3qY7fkas2Goq9vFG6Ct/y7yXzvXRQAVsEdz+Dak4yzsRj86PFhpz4QNoqyAG+0CwtQd/2cm0y6cG/U2u56wq2TBLGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxAQUEAQMCBGjlpwCWQNPtlzIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy0pxeU8hFVEJT2RNUj0lJ4W0NttKEkfCZp6+y6fWzimfhQ0HQFnckeBBJ3zyho2pVts2IuSnzviGNGnl25ChEYg==",
+  "payer": "7e8biLiqcS3KMmGR6DwZt3zAhUFbU6wNrwhQKmL1k7jm",
+  "verifierSignatureBase64": "C/5HcHT56Oi3u/N5dXujY0WwnT/clKXQebYCwpfXEwSZlGUF61aPL6daGFrSIFCQfD5581vbO9K8gcRkVgMLBQ==",
+  "payerSignatureBase64": "3eIBPCsS9jDGo9D3DsCHosTwezuL9VK3CMv3J0E3bDODyiILhN+ut+/ZIPUToHFQQol7uIecHKIdMufNOBo4Dw=="
+}
