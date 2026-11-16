@@ -168,3 +168,7 @@ remain unchanged. New default lifecycle/verifier test globs include execution-le
 authenticated offline fixture, migration, process-crash and concurrent SQLite cases.
 All execution/finality results are explicitly offline test models, never live RPC
 confirmation. No operational signer, sender or retry capability is introduced.
+
+## Secure offline attestation integration
+
+The existing verifier test glob also executes the Phase 8D integration and real-process crash tests. See [Secure attestation integration](SECURE_ATTESTATION_INTEGRATION.md) for the reused components, preserved authority boundaries and intentional composition gaps. The verifier job remains offline; no signer secret, live RPC, deployment or transaction submission is added. All six jobs, tool/action pins, dependency gates and read-only workflow permissions remain unchanged.

@@ -1,15 +1,15 @@
 import { createHash } from "node:crypto";
-import { LifecycleStore, INTENT_FORMAT, type JobBindings, type JobClaim, type VerificationJob } from "@proofwork/lifecycle";
+import { LifecycleStore, INTENT_FORMAT, type JobBindings, type JobClaim, type VerificationJob, type TransactionIntent } from "@proofwork/lifecycle";
 import { PROGRAM_ID, SETTLEMENT_DEVNET_GENESIS } from "@proofwork/finance-client";
 import { AttestationError, buildAttestMilestoneInstruction } from "./attestation.js";
 import type { AttestationStateReader } from "./attestation-chain.js";
 import { evidenceHash } from "./commitments.js";
 import { parseManifest } from "./manifest.js";
-import { parseRequest, type VerifierService } from "./service.js";
+import { parseRequest, type VerifierService, type VerificationResult } from "./service.js";
 import { AttestationTransactionCoordinator, type CoordinationGuard, type PolicySimulationBoundary } from "./transaction-coordinator.js";
 import type { TransactionPolicyConfig, TrustedBlockhashSource } from "./transaction-policy.js";
 
-import { OfflineDualSignatureSimulation, OfflineSimulationError, type OfflineSimulationEvidence } from "./offline-signature-simulation.js";
+import { OfflineDualSignatureSimulation, OfflineSimulationError, type OfflineSimulationEvidence, type SimulationContext } from "./offline-signature-simulation.js";
 
 export class OfflineAuthorizationError extends Error {
   constructor(public readonly code: string) { super(code); }
@@ -22,6 +22,14 @@ export interface OfflineMockOptions {
   /** Test scheduling only. Receives no message, job, ticket, approval or signing capability. */
   readonly gate?: Readonly<{ wait(): Promise<void> }>;
 }
+/** Trusted synchronous audit hooks: public data only, never policy tickets or signed wire. */
+export type OfflineCoordinationAuditEvent =
+  | { readonly kind: "job_resolved"; readonly job: VerificationJob }
+  | { readonly kind: "verification_result"; readonly result: VerificationResult }
+  | { readonly kind: "policy_consumed"; readonly context: SimulationContext; readonly job: VerificationJob; readonly claim: JobClaim }
+  | { readonly kind: "preparation_recorded"; readonly intent: TransactionIntent; readonly job: VerificationJob; readonly claim: JobClaim }
+  | { readonly kind: "signature_simulation_observed"; readonly evidence: OfflineSimulationEvidence };
+export type OfflineCoordinationAudit = (event: OfflineCoordinationAuditEvent) => void;
 export interface OfflineMockReceipt {
   readonly mode: "offline-mock";
   readonly receiptId: string;
@@ -43,7 +51,8 @@ export class DurableOfflineCoordinator {
     private readonly chain: AttestationStateReader, config: TransactionPolicyConfig,
     private readonly workerId: string, private readonly blockhashes: TrustedBlockhashSource,
     private readonly now: () => number = () => performance.now(), options: OfflineMockOptions = { mode: "offline-mock" },
-    private readonly simulation?: OfflineDualSignatureSimulation) {
+    private readonly simulation?: OfflineDualSignatureSimulation,
+    private readonly audit?: OfflineCoordinationAudit) {
     check(/^[A-Za-z0-9_-]{1,80}$/.test(workerId), "invalid_worker");
     check(Object.keys(options).every(k => ["mode", "outcome", "timeoutMs", "gate"].includes(k))
       && options.mode === "offline-mock" && ["record", "reject", "failure"].includes(options.outcome ?? "record")
@@ -54,10 +63,15 @@ export class DurableOfflineCoordinator {
     check(simulation === undefined || (simulation instanceof OfflineDualSignatureSimulation
       && simulation.mode === "ephemeral-offline-test" && simulation.verifier === config.verifier
       && simulation.feePayer === config.feePayer), "incorrect_simulation_identity");
+    check(audit === undefined || typeof audit === "function", "invalid_audit_hook");
     this.#config = Object.freeze({ ...config });
     // Capture the test scheduler, so configuration mutation cannot swap the boundary.
     this.#options = Object.freeze({ mode: "offline-mock", outcome: options.outcome, timeoutMs: options.timeoutMs,
       gate: options.gate ? Object.freeze({ wait: options.gate.wait.bind(options.gate) }) : undefined });
+  }
+  private notify(event: OfflineCoordinationAuditEvent): void {
+    // A defensive public-data copy prevents a hook from mutating verification or stored bindings.
+    if (this.audit) check(this.audit(Object.freeze(structuredClone(event))) === undefined, "asynchronous_audit_not_supported");
   }
   /** Only original process-local receipts can retrieve defensive copies. Stored metadata is not authorization. */
   readMockMessage(receipt: OfflineMockReceipt): Buffer {
@@ -87,6 +101,7 @@ export class DurableOfflineCoordinator {
       evidenceHash: initial.evidenceHash, repositoryId: request.repositoryId, contributorId: request.contributorId,
       commit: request.commit, verificationSpecHash: initial.requirementsHash };
     let job: VerificationJob = this.store.jobs.createOrGetJob(creationId, bindings);
+    this.notify({ kind: "job_resolved", job });
     const claimed = this.store.jobs.claimJob(job.jobId, job.identity, job.revision, this.workerId);
     job = claimed.job;
     const claim: JobClaim = claimed.claim;
@@ -111,7 +126,8 @@ export class DurableOfflineCoordinator {
       return value;
     } };
     const service: Pick<VerifierService, "verify"> = { verify: async (value, token) => {
-      current(); const result = await this.service.verify(value, token, current); current(); return result;
+      current(); const result = await this.service.verify(value, token, current); current();
+      this.notify({ kind: "verification_result", result }); current(); return result;
     } };
     const blockhashes: TrustedBlockhashSource = { read: async () => {
       current(); const result = await this.blockhashes.read(); current(); return result;
@@ -143,17 +159,20 @@ export class DurableOfflineCoordinator {
               current();
               check(context.messageDigest === messageDigest && context.operationKey === job.operationKey
                 && context.milestone === job.bindings.milestone && context.programId === job.bindings.programId, "transaction_substitution");
+              this.notify({ kind: "policy_consumed", context, job, claim }); current();
               const created = this.store.transactionIntents.createIntent(claim, job.revision, creationId, this.#config.feePayer);
               check(created.created, "simulation_intent_already_exists");
               const prepared = this.store.transactionIntents.recordPreparation(claim, job.revision, created.intent.intentId,
                 created.intent.identity, 0, { messageDigest, format: INTENT_FORMAT, blockhash: context.blockhash,
                   lastValidBlockHeight: String(context.lastValidBlockHeight), observedBlockHeight: String(context.observedBlockHeight) });
               // V4 cannot represent durable signature evidence. Burn/retain it BEFORE any test provider call.
-              this.store.transactionIntents.requireReconciliation(claim, job.revision, prepared.intentId, prepared.identity, prepared.revision);
+              const retained = this.store.transactionIntents.requireReconciliation(claim, job.revision, prepared.intentId, prepared.identity, prepared.revision);
+              this.notify({ kind: "preparation_recorded", intent: retained, job, claim }); current();
               this.store.offlineHandoffs.begin(claim, job.revision, messageDigest); began = true;
             },
             beforeProviders: async () => { if (this.#options.gate) await gate(); mockOutcome(); },
           });
+          current(); this.notify({ kind: "signature_simulation_observed", evidence }); current();
         } else {
           this.store.offlineHandoffs.begin(claim, job.revision, messageDigest); began = true;
           if (this.#options.gate) await gate();
