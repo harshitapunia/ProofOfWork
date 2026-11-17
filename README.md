@@ -72,3 +72,5 @@ and [team approval](docs/TEAM_APPROVAL.md).
 No Mainnet, real funds, production signer activation or deployment is authorized
 by validation. Dependency findings and accepted maintenance debt remain visible;
 the repository is not claimed vulnerability-free.
+
+The [operational journal foundation](docs/OPERATIONAL_JOURNAL_FOUNDATION.md) adds a pure admission/event model with evidence-bound replay. It does not persist operational records or activate signing/sending; its proposed schema requires separate approval.

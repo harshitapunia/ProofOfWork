@@ -163,6 +163,10 @@ function signing(input:unknown,r:CustodyRoleRequest):SigningOutcome {
 export function validateAdmission(input:unknown,anchor:unknown,snapshot:unknown):ValidatedProtocolData<AdmissionRequest> {
   try {const x=context(anchor,snapshot);return result(admission(input,x.anchor,x.clock,true));}catch{throw new ProtocolDataError();}
 }
+/** Historical DATA replay only: no fresh admission, expiry renewal or authority restoration. */
+export function validateHistoricalAdmission(input:unknown,anchor:unknown,snapshot:unknown):ValidatedProtocolData<AdmissionRequest> {
+  try {const x=context(anchor,snapshot);return result(admission(input,x.anchor,x.clock,false));}catch{throw new ProtocolDataError();}
+}
 export function validateRoleRequest(input:unknown,admissionData:unknown,anchor:unknown,snapshot:unknown):ValidatedProtocolData<CustodyRoleRequest> {
   try {const x=context(anchor,snapshot),d=admission(admissionData,x.anchor,x.clock,true);return result(role(input,d,x.anchor));}catch{throw new ProtocolDataError();}
 }
