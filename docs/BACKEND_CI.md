@@ -58,21 +58,27 @@ checks Web3 1.98.4, Jayson 5.0.0, removed vulnerable descendants, actual mocked 
 behavior and simulated browser bundles. The exact scoped override remains outside
 Web3's upstream declared range. A future consuming root must preserve/review it.
 
-The optional repository-root Anchor SDK and legacy Mocha/formatting tooling is
-retained for existing developer compatibility and now has a reproducible lock.
-It is not used as the backend package installation root. Its modules/tests are
-not executed by this CI; only a locked install and advisory inspection run.
-No root tooling major upgrade is hidden in this PR.
+The repository-root Anchor SDK remains pinned at 1.2.2 and is not the backend
+installation root. The separate [root tooling remediation](ROOT_TOOLING_REMEDIATION.md)
+moves the developer runner to Mocha 11.8.0 with peer-compatible ts-mocha 11.1.0,
+ts-node 10.9.2 and tsconfig-paths 4.2.0. Exact Mocha-scoped overrides fix its diff,
+glob, YAML, minimatch and serializer dependency paths. These cross declared major
+ranges and require review; real CLI compatibility cases cover CommonJS/ESM,
+TypeScript enums, Anchor public serialization, YAML/glob/ignore, diffs, parallel
+workers and file-watch reruns. They are added to the existing Node security job;
+all six jobs, permissions and tool/action pins remain unchanged.
 
-The initial root audit reports 13 vulnerable package entries: seven high, five
-moderate and one low. Inherited entries are not separate independent CVEs.
-Affected packages include Anchor core/Borsh, Web3, Jayson, stream-json, UUID,
-TOML, Mocha, js-yaml, minimatch, nanoid, serialize-javascript and diff.
-The exact installed versions, advisory IDs, inherited paths and severity are in
-.github/security-policy.json. Root findings are security debt, not harmlessness
-or repository-wide clean-audit certification. In particular TOML parsing and
-legacy Mocha dependencies need a prioritized separate remediation assessment;
-do not process untrusted inputs or activate signing through this root tree.
+GHSA-fc5q-39xc-vjpf made the unchanged old Mocha/Chokidar/Picomatch tree fail the
+gate. Its new findings were not waived. This candidate removes that dependency
+path and eliminates Mocha-chain audit findings. The remaining root audit has
+seven SDK package entries (two high, five moderate): Anchor core/Borsh, Web3,
+Jayson, stream-json, TOML and UUID. These inherited entries are not independent
+CVEs or harmlessness. Six obsolete tooling exceptions are removed; the seven
+remaining package/version/node/severity/advisory constraints and expiry are
+unchanged. Their rationale now accurately describes trusted compatibility imports.
+No Anchor/Kit migration or backend dependency change is introduced. Root SDK
+checks use only controlled public fixtures, never RPC, wallet loading or signing.
+Do not process untrusted input or activate operational use through this root tree.
 
 Root exceptions expire on 2026-12-14. Each is constrained to the exact package,
 installed versions, node paths, severity and advisory/inheritance set. Changed
