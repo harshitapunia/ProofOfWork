@@ -74,3 +74,5 @@ by validation. Dependency findings and accepted maintenance debt remain visible;
 the repository is not claimed vulnerability-free.
 
 The [operational journal foundation](docs/OPERATIONAL_JOURNAL_FOUNDATION.md) adds a pure admission/event model with evidence-bound replay. It does not persist operational records or activate signing/sending; its proposed schema requires separate approval.
+
+The [application API foundation](docs/APPLICATION_API_FOUNDATION.md) adds public process health and authorized internal job, milestone and offline-execution projections. Private HTTP routes remain unregistered pending approved application authentication; operational execution stays disabled.

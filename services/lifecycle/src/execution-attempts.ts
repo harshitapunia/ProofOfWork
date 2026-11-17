@@ -17,6 +17,7 @@ export interface ExecutionAttempts {
   create(claim: JobClaim, jobRevision: number, requestId: string, intentId: string, intentIdentity: string,
     observationAuthority: string): Readonly<{attempt: ExecutionAttempt; created: boolean}>;
   get(id: string): ExecutionAttempt | undefined;
+  getForIntent(intentId: string): ExecutionAttempt | undefined;
   history(id: string): readonly ExecutionHistory[];
   list(afterId?: string, limit?: number): readonly ExecutionAttempt[];
   recordSubmissionIntent(claim: JobClaim, jobRevision: number, ref: ExecutionRef, token: unknown): ExecutionAttempt;
@@ -162,6 +163,10 @@ export function createExecutionAttempts(transaction: JobTransaction): {attempts:
       });
     },
     get(id: string) { jobId(id); return transaction(db => load(db,id)?.value,false); },
+    getForIntent(id: string) { jobId(id); return transaction(db => {
+      const row = db.prepare("SELECT attempt_id FROM execution_attempts WHERE intent_id=?").get(id);
+      return row ? load(db,row.attempt_id as string)!.value : undefined;
+    },false); },
     history(id: string) { jobId(id); return transaction(db => {const v=load(db,id);check(v,"not_found");return v.history;},false); },
     list(afterId?: string,limit=100) {
       if (afterId !== undefined) jobId(afterId); integer(limit,100); check(limit > 0);
