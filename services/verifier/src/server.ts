@@ -1,3 +1,4 @@
+import { applicationHealth, applicationReply, applicationRequestId } from "./application-api-contracts.js";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { GitHub } from "./github.js";
@@ -10,6 +11,16 @@ const server = createServer(async (request, response) => {
   response.setHeader("content-type", "application/json");
   response.setHeader("cache-control", "no-store");
   response.setHeader("x-content-type-options", "nosniff");
+  // Only non-sensitive health is registered; application queries have no approved auth adapter.
+  if (request.url?.startsWith("/api/")) {
+    const reply = request.url !== "/api/v1/health"
+      ? applicationReply(applicationRequestId(), "unknown", null, 404, null, "none", "route_not_registered")
+      : request.headers.origin ? applicationReply(applicationRequestId(), "health", null, 400, null, "none", "invalid_request")
+      : request.method !== "GET" ? applicationReply(applicationRequestId(), "health", null, 405, null, "none", "method_not_allowed")
+      : applicationHealth();
+    if (reply.statusCode === 405) response.setHeader("allow", "GET");
+    response.writeHead(reply.statusCode).end(JSON.stringify(reply.body)); return;
+  }
   if (request.method !== "POST" || request.url !== "/verify" || request.headers.origin
       || request.headers["content-type"] !== "application/json") {
     response.writeHead(400).end('{"error":"invalid_request"}'); return;

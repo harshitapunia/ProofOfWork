@@ -36,6 +36,7 @@ export interface TransactionIntents {
   markPreparationUncertain(claim: JobClaim, jobRevision: number, intentId: string, identity: string, intentRevision: number): TransactionIntent;
   requireReconciliation(claim: JobClaim, jobRevision: number, intentId: string, identity: string, intentRevision: number): TransactionIntent;
   getIntent(intentId: string): TransactionIntent | undefined;
+  getForJob(jobId: string): TransactionIntent | undefined;
   getIntentHistory(intentId: string): readonly IntentHistoryEntry[];
   listOutstandingIntents(afterId?: string, limit?: number): Readonly<{entries: readonly TransactionIntent[]; nextAfter?: string}>;
 }
@@ -190,6 +191,10 @@ export function createTransactionIntents(transaction: JobTransaction): Transacti
       return mutate(c, j, id, identityValue, revision, "reconciliation_required");
     },
     getIntent(id: string) { jobId(id); return transaction(db => load(db, id)?.value, false); },
+    getForJob(id: string) { jobId(id); return transaction(db => {
+      const row = db.prepare("SELECT intent_id FROM transaction_intents WHERE job_id=?").get(id);
+      return row ? load(db, row.intent_id as string)!.value : undefined;
+    }, false); },
     getIntentHistory(id: string) {
       jobId(id); return transaction(db => { const row = load(db, id); check(row, "not_found"); return row.history; }, false);
     },
