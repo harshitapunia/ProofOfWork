@@ -49,7 +49,7 @@ jobs:
       - run: npm --prefix services/verifier ci --ignore-scripts
       - run: npm --prefix services/verifier run check
       - run: npm --prefix services/verifier run build
-      - name: Validate verifier, application API, journal model and read-only integration
+      - name: Validate verifier, wallet-authenticated API, journal model and read-only integration
         run: npm --prefix services/verifier test
       - name: Validate lifecycle storage, fencing, v5 execution ledger and migrations
         run: |

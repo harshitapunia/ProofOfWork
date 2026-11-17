@@ -1,3 +1,4 @@
+import type { WalletApplicationHttp } from "./wallet-application-http.js";
 import { applicationHealth, applicationReply, applicationRequestId } from "./application-api-contracts.js";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -6,12 +7,13 @@ import { DevnetReader } from "./chain.js";
 import { DockerRunner } from "./runner.js";
 import { VerifierService } from "./service.js";
 
-export function createVerifierServer(service: Pick<VerifierService, "verify">) {
+export function createVerifierServer(service: Pick<VerifierService, "verify">, application?: WalletApplicationHttp) {
 const server = createServer(async (request, response) => {
   response.setHeader("content-type", "application/json");
   response.setHeader("cache-control", "no-store");
   response.setHeader("x-content-type-options", "nosniff");
-  // Only non-sensitive health is registered; application queries have no approved auth adapter.
+  if (application && await application.handle(request, response)) return;
+  // Default composition registers only public health; no wallet adapter is activated by the CLI.
   if (request.url?.startsWith("/api/")) {
     const reply = request.url !== "/api/v1/health"
       ? applicationReply(applicationRequestId(), "unknown", null, 404, null, "none", "route_not_registered")

@@ -151,3 +151,7 @@ organizations cannot yet fetch their private dashboard over HTTP. The next
 focused task is agreeing and implementing real authentication/wallet ownership
 and operator-role verification, then exposing these projections through that
 boundary with HTTP authorization tests. No frontend framework is selected here.
+
+## Subsequent wallet-authenticated composition
+
+[Wallet-authenticated application API](WALLET_AUTHENTICATED_APPLICATION_API.md) adds a tested single-instance resolver and private routes through explicit trusted composition. The default CLI behavior described here remains unchanged. This follow-up does not supply production protocol/deployment approval; use its documentation for current route, cookie and activation boundaries.
