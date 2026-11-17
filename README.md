@@ -50,9 +50,12 @@ wrappers can generate deployment identities; do not use them in this validation.
 
 ## Remaining work and boundaries
 
-Missing operational pieces include durable jobs/reservations, restart recovery,
-reviewed signer custody, submission/confirmation coordination, complete lifecycle
-clients and the application API/frontend. Local VM tests do not establish Devnet
+Durable offline jobs, intents, execution histories and restart inspection are
+implemented. [Devnet execution readiness](docs/DEVNET_EXECUTION_READINESS.md)
+correlates their evidence with existing protocol checks and reports NOT READY:
+authenticated custody, operational admission, external fencing, controlled first
+submission and authenticated live reconciliation remain blocked. Complete application
+API/frontend integration also remains. Local VM tests do not establish Devnet
 feature parity or complete backend automation. This phase performs no deployment.
 
 The approved MVP allows one submission and no disputes or automatic timeout
