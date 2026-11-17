@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { LifecycleStore } from "@proofwork/lifecycle";
 import { ApplicationQueries, type ApplicationChainSource } from "./application-queries.js";
 import { APPLICATION_API_VERSION, applicationReply, applicationRequestId, type ApiReply, type ApplicationResource } from "./application-api-contracts.js";
-import { WalletSessions, WalletAuthError, sessionCookie, readSessionCookie } from "./wallet-sessions.js";
+import { WalletSessions, WalletAuthError, sessionCookie, readSessionCookie, challengeCookie, readChallengeCookie } from "./wallet-sessions.js";
 const PREFIX = "/api/v1/";
 export class WalletApplicationHttp {
   #active = 0;
@@ -76,10 +76,11 @@ export class WalletApplicationHttp {
           this.sessions.revoke(token); response.setHeader("set-cookie", sessionCookie("", true));
           this.reply(response, applicationReply(applicationRequestId(), "authentication", null, 200, Object.freeze({ kind: "wallet_logout", revoked: true }), "wallet_signature_session"));
         } else if (path.endsWith("/challenge")) {
-          const view = this.sessions.issue(await this.body(request), request.headers.origin!);
-          this.reply(response, applicationReply(applicationRequestId(), "authentication", null, 200, view, "server_challenge"));
+          const issued = this.sessions.issue(await this.body(request), request.headers.origin!, readChallengeCookie(request.headers.cookie));
+          response.setHeader("set-cookie", challengeCookie(issued.requesterToken));
+          this.reply(response, applicationReply(applicationRequestId(), "authentication", null, 200, issued.view, "server_challenge"));
         } else {
-          const result = this.sessions.verify(await this.body(request), request.headers.origin!);
+          const result = this.sessions.verify(await this.body(request), request.headers.origin!, readChallengeCookie(request.headers.cookie));
           response.setHeader("set-cookie", sessionCookie(result.token));
           this.reply(response, applicationReply(applicationRequestId(), "authentication", result.view.sessionId, 200, result.view, "wallet_signature_session"));
         }

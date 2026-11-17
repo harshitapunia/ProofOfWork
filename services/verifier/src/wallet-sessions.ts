@@ -5,6 +5,7 @@ import { key } from "./commitments.js";
 import { record } from "./read-only-observation-data.js";
 import { APPLICATION_API_VERSION, type WalletChallengeView, type WalletSessionView } from "./application-api-contracts.js";
 export const SESSION_COOKIE = "__Host-proofwork_session";
+export const CHALLENGE_COOKIE = "__Host-proofwork_challenge";
 export const CHALLENGE_LIFETIME_MS = 120_000, SESSION_LIFETIME_MS = 300_000;
 export class WalletAuthError extends Error {
   constructor(readonly code: string, readonly status: number) { super(code); }
@@ -22,7 +23,7 @@ function wallet(value: unknown): string {
   } catch { throw new WalletAuthError("invalid_request", 400); }
 }
 const digest = (token: string) => createHash("sha256").update(token).digest("hex");
-interface Challenge { view: WalletChallengeView; expires: number }
+interface Challenge { view: WalletChallengeView; expires: number; requesterHash: string }
 interface Session { view: WalletSessionView; expires: number; challengeId: string; challengeIssuedAt: string }
 /** Instantiating this service does not register routes or change the default CLI deployment. */
 export class WalletSessions {
@@ -30,6 +31,7 @@ export class WalletSessions {
   readonly #now: () => number;
   readonly #challenges = new Map<string, Challenge>();
   readonly #sessions = new Map<string, Session>(); // SHA-256 token keys; raw tokens are not retained.
+  readonly #requesters = new Map<string, number>(); // Hash of server-issued pre-authentication cookie -> expiry.
   #last = 0; #window = 0; #issued = 0; #verified = 0;
   constructor(config: { origin: string; domain: string; cluster: "devnet" }, now: () => number = Date.now) {
     const c = fields(config, ["origin", "domain", "cluster"]);
@@ -46,23 +48,32 @@ export class WalletSessions {
   private time(): number {
     const t = this.#now();
     if (!Number.isSafeInteger(t) || t <= 0 || t < this.#last || t > 8e15) {
-      this.#challenges.clear(); this.#sessions.clear();
+      this.#challenges.clear(); this.#sessions.clear(); this.#requesters.clear();
       throw new WalletAuthError("authentication_unavailable", 503);
     }
     this.#last = t;
     for (const [id, c] of this.#challenges) if (t >= c.expires) this.#challenges.delete(id);
     for (const [id, s] of this.#sessions) if (t >= s.expires) this.#sessions.delete(id);
+    for (const [id, expires] of this.#requesters) if (t >= expires) this.#requesters.delete(id);
     if (t - this.#window >= 60_000) { this.#window = t; this.#issued = 0; this.#verified = 0; }
     return t;
   }
   private context(origin: string): void { need(origin === this.origin, "invalid_request"); }
-  issue(input: unknown, origin: string): WalletChallengeView {
+  issue(input: unknown, origin: string, requester?: string): Readonly<{ view: WalletChallengeView; requesterToken: string }> {
     this.context(origin); const t = this.time();
     need(++this.#issued <= 60, "authentication_rate_limited", 429);
     const r = fields(input, ["apiVersion", "cluster", "wallet"]);
     need(r.apiVersion === APPLICATION_API_VERSION && r.cluster === "devnet");
     const address = wallet(r.wallet);
-    need(this.#challenges.size < 256 && [...this.#challenges.values()].filter(c => c.view.wallet === address).length < 4,
+    need(this.#challenges.size < 256, "authentication_capacity", 503);
+    // A public wallet is not a requester identity. Anonymous clients cannot reserve its owner's quota.
+    let requesterToken = requester, requesterHash = typeof requester === "string" && /^[A-Za-z0-9_-]{43}$/.test(requester) ? digest(requester) : "";
+    if (!this.#requesters.has(requesterHash)) {
+      need(this.#requesters.size < 256, "authentication_capacity", 503);
+      requesterToken = randomBytes(32).toString("base64url"); requesterHash = digest(requesterToken);
+      need(!this.#requesters.has(requesterHash), "authentication_unavailable", 503);
+    }
+    need([...this.#challenges.values()].filter(c => c.requesterHash === requesterHash && c.view.wallet === address).length < 4,
       "authentication_capacity", 503);
     const challengeId = randomBytes(32).toString("hex");
     need(!this.#challenges.has(challengeId), "authentication_unavailable", 503);
@@ -75,14 +86,18 @@ export class WalletSessions {
     const message = `${signInInput.domain} wants you to sign in with your Solana account:\n${address}\n\n${signInInput.statement}\n\nURI: ${this.origin}\nVersion: 1\nChain ID: solana:devnet\nNonce: ${challengeId}\nIssued At: ${issuedAt}\nExpiration Time: ${expiresAt}\nRequest ID: ${challengeId}`;
     const view: WalletChallengeView = Object.freeze({ kind: "wallet_challenge", challengeId, wallet: address,
       issuedAt, expiresAt, message, signInInput, signedMessageFormat: "siws-raw-ed25519" });
-    this.#challenges.set(challengeId, { view, expires: t + CHALLENGE_LIFETIME_MS }); return view;
+    this.#requesters.set(requesterHash, t + CHALLENGE_LIFETIME_MS);
+    this.#challenges.set(challengeId, { view, expires: t + CHALLENGE_LIFETIME_MS, requesterHash });
+    return Object.freeze({ view, requesterToken: requesterToken! });
   }
-  verify(input: unknown, origin: string): Readonly<{ token: string; view: WalletSessionView }> {
+  verify(input: unknown, origin: string, requester?: string): Readonly<{ token: string; view: WalletSessionView }> {
     this.context(origin); const t = this.time();
     need(++this.#verified <= 120, "authentication_rate_limited", 429);
     const r = fields(input, ["apiVersion", "cluster", "challengeId", "messageBase64", "signatureBase64"]);
     need(typeof r.challengeId === "string" && /^[a-f0-9]{64}$/.test(r.challengeId));
     const c = this.#challenges.get(r.challengeId);
+    const requesterHash = typeof requester === "string" && /^[A-Za-z0-9_-]{43}$/.test(requester) ? digest(requester) : "";
+    need(c && this.#requesters.has(requesterHash) && c.requesterHash === requesterHash, "authentication_failed", 401);
     // No await between lookup, consumption and verification/session insertion: one attempt, one process.
     this.#challenges.delete(r.challengeId);
     need(c, "authentication_failed", 401);
@@ -113,10 +128,16 @@ export function sessionCookie(token: string, revoke = false): string {
   need(revoke || /^[A-Za-z0-9_-]{43}$/.test(token));
   return `${SESSION_COOKIE}=${revoke ? "" : token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${revoke ? 0 : SESSION_LIFETIME_MS / 1000}`;
 }
-export function readSessionCookie(raw: string | undefined): string | undefined {
+export function challengeCookie(token: string): string {
+  need(/^[A-Za-z0-9_-]{43}$/.test(token));
+  return `${CHALLENGE_COOKIE}=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${CHALLENGE_LIFETIME_MS / 1000}`;
+}
+function readCookie(raw: string | undefined, name: string): string | undefined {
   if (typeof raw !== "string" || raw.length > 2048) return undefined;
-  const values = raw.split(";").map(v => v.trim()).filter(v => v.startsWith(SESSION_COOKIE + "="));
+  const values = raw.split(";").map(v => v.trim()).filter(v => v.startsWith(name + "="));
   if (values.length !== 1) return undefined;
-  const value = values[0]!.slice(SESSION_COOKIE.length + 1);
+  const value = values[0]!.slice(name.length + 1);
   return /^[A-Za-z0-9_-]{43}$/.test(value) ? value : undefined;
 }
+export const readSessionCookie = (raw: string | undefined) => readCookie(raw, SESSION_COOKIE);
+export const readChallengeCookie = (raw: string | undefined) => readCookie(raw, CHALLENGE_COOKIE);

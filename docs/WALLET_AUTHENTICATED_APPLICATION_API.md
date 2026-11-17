@@ -49,7 +49,7 @@ Operational signer/simulation/protocol modules are not reused for login authorit
 ## Expiration, replay and bounds
 
 - Challenge TTL: 120 seconds, rejecting at the exact deadline.
-- At most 256 live challenges and four per wallet. No live challenge is evicted
+- At most 256 live challenges and four per requester-and-wallet pair. No live challenge is evicted
   to make room. Expired entries are pruned on use.
 - At most 60 issuance calls and 120 proof calls per fixed server-minute window,
   including malformed requests that reach those operations. This is a bounded
@@ -71,6 +71,22 @@ Unauthenticated callers can exhaust these global budgets and cause temporary
 unavailability. Do not expose this review composition publicly without approved
 edge limits, connection controls, monitoring and deployment configuration.
 No client-IP/proxy trust assumption, global registry or new SQL table is added.
+
+A public wallet address is not an authenticated requester. Challenge issuance
+uses a separate server-issued 256-bit `__Host-proofwork_challenge` cookie, with
+Secure/HttpOnly/SameSite=Strict/Path=/ and a 120-second lifetime. Only its hash is
+retained in a bounded map (at most 256 contexts), with expired entries pruned.
+Issue calls renew that context's lifetime to cover the newly issued challenge.
+The four-entry allowance is isolated by this context and wallet; four anonymous
+reservations in another browser cannot consume the wallet owner's allowance.
+Verification requires the same live context before nonce consumption, so a
+missing, invented or foreign cookie cannot burn another requester's valid proof.
+The nonce's independent 120-second deadline and all global limits remain enforced.
+
+This cookie isolates browser contexts, not human identity or Sybil-resistant
+clients. Dropping cookies can obtain a new context subject to global limits;
+global anonymous flooding still needs approved edge protection. No client-chosen
+requester identifier or untrusted IP/forwarded header is treated as identity.
 
 ## Sessions and browser policy
 
@@ -133,8 +149,8 @@ The following routes exist **only in explicit WalletApplicationHttp composition*
 
 | Method and path | Input / result |
 | --- | --- |
-| POST /api/v1/auth/challenge | Exact `{apiVersion, cluster, wallet}`; returns server challenge and SIWS input. |
-| POST /api/v1/auth/verify | Exact `{apiVersion, cluster, challengeId, messageBase64, signatureBase64}`; returns safe session view and secure cookie. |
+| POST /api/v1/auth/challenge | Exact `{apiVersion, cluster, wallet}`; returns server challenge/SIWS input and secure requester cookie. |
+| POST /api/v1/auth/verify | Same requester cookie and exact `{apiVersion, cluster, challengeId, messageBase64, signatureBase64}`; returns safe session view and separate secure session cookie. |
 | POST /api/v1/auth/logout | Session cookie and exact `{apiVersion, cluster}`; revokes and clears cookie. |
 | GET /api/v1/jobs/:jobId | Session cookie; existing authorized verification-job view. |
 | GET /api/v1/jobs/:jobId/milestone | Session cookie; existing authorized decoded milestone view. |
