@@ -151,9 +151,7 @@ test("production server import graph cannot reach test modules or signing adapte
   const root = new URL("../src/", import.meta.url);
   const visited = new Set<string>();
   const inspect = async (url: URL): Promise<void> => {
-    assert.ok(url.href.startsWith(root.href), "server imports must stay inside production source");
-    assert.ok(!/local-test-signer|devnet-execution|transaction-coordinator/.test(url.pathname),
-      "the HTTP server must not activate a signing workflow");
+    assertProductionModule(url, root);
     if (visited.has(url.href)) return;
     visited.add(url.href);
     const source = await readFile(url, "utf8");
@@ -167,4 +165,18 @@ test("production server import graph cannot reach test modules or signing adapte
   await inspect(new URL("server.js", root));
   assert.ok(visited.size > 1);
   await assert.rejects(access(new URL("local-test-signer.js", root)), { code: "ENOENT" });
+});
+
+// Check module identity inside the already-validated root, not unrelated checkout names.
+function assertProductionModule(url: URL, root: URL): void {
+  assert.ok(url.href.startsWith(root.href), "server imports must stay inside production source");
+  assert.ok(!/local-test-signer|devnet-execution|transaction-coordinator/.test(decodeURIComponent(url.pathname.slice(root.pathname.length))),
+    "the HTTP server must not activate a signing workflow");
+}
+test("server isolation rejects forbidden modules even when checkout names contain their identifiers", () => {
+  const root = new URL("file:///tmp/devnet-execution/transaction-coordinator/src/");
+  assertProductionModule(new URL("server.js", root), root);
+  for (const name of ["local-test-signer.js", "devnet-execution.js", "devnet-execution-readiness.js", "transaction-coordinator.js", "%64evnet-execution.js", "transaction%2dcoordinator.js"])
+    assert.throws(() => assertProductionModule(new URL(name, root), root));
+  assert.throws(() => assertProductionModule(new URL("../server.js", root), root));
 });
