@@ -7,7 +7,7 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "test": "node --test rpc-compatibility.test.mjs browser-compatibility.test.mjs"
+    "test": "node --test rpc-compatibility.test.mjs browser-compatibility.test.mjs root-tooling-compatibility.test.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.12"
