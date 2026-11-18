@@ -55,6 +55,9 @@ test("root Mocha preserves useful assertion diffs and failing exit status", t =>
   const dir = fixture(t, { "failure.cjs": "const assert=require('node:assert/strict');describe('intentional failure fixture',()=>{it('reports a structural diff',()=>assert.deepEqual({value:'actual'},{value:'expected'}))});" });
   const result = run(mocha, ["--no-color", "--reporter", "spec", join(dir, "failure.cjs")]);
   assert.equal(result.status, 1); assert.match(result.stdout, /1 failing/); assert.match(result.stdout, /\+ expected.*- actual/); assert(!result.stdout.includes("TypeError"));
+  assert.doesNotMatch(result.stdout, /failed to generate Mocha diff/);
+  assert.match(result.stdout, /^\s*-\s*.*["']actual["']/m);
+  assert.match(result.stdout, /^\s*\+\s*.*["']expected["']/m);
 });
 test("root Mocha parallel workers preserve serialized root hooks", t => {
   const dir = fixture(t, {
