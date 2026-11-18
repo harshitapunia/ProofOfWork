@@ -83,7 +83,7 @@ def main():
     if args.mode == "node":
         for folder, label in [(".", "root"), ("packages/finance-client", "finance"),
                               ("services/verifier", "verifier"), ("services/lifecycle", "lifecycle"),
-                              ("tests/dependency-security", "compatibility")]:
+                              ("tests/dependency-security", "compatibility"), ("apps/web", "frontend")]:
             result = subprocess.run(["npm", "audit", "--json"], cwd=ROOT / folder,
                                     text=True, capture_output=True)
             require(result.returncode in (0, 1), "npm audit infrastructure failure: " + label)
