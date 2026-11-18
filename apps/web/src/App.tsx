@@ -1,3 +1,4 @@
+import { AUTH_ROUTES, jobRoutes } from "./routes";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, ENVELOPE, authenticate, getWallet, message, request, uuid, type Execution, type Job, type Milestone, type Observation, type Session } from "./api";
 import { demoInternships } from "./demo";
@@ -24,6 +25,19 @@ export function App() {
   const [loadError, setLoadError] = useState("");
   const generation = useRef(0), readGeneration = useRef(0);
   const authInFlight = useRef(false);
+  const cookieTail = useRef<Promise<void>>(Promise.resolve());
+  const needsRevocation = useRef(false);
+  function cookieOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = cookieTail.current.then(operation, operation);
+    cookieTail.current = pending.then(() => {}, () => {});
+    return pending;
+  }
+  async function revokeSession(): Promise<void> {
+    try { await request(AUTH_ROUTES.logout, "wallet_logout", ENVELOPE); }
+    catch (error) { if (!(error instanceof ApiError && error.status === 401 && error.code === "authentication_required")) throw error; }
+    needsRevocation.current = false;
+  }
+  const [skipFocused, setSkipFocused] = useState(false);
   const main = useRef<HTMLElement>(null);
   const isHome = route === "home";
   const role = route === "organization" ? "organization" : "student";
@@ -38,14 +52,15 @@ export function App() {
     window.addEventListener("hashchange", change);
     return () => window.removeEventListener("hashchange", change);
   }, []);
-  useEffect(() => { main.current?.focus({ preventScroll: true }); window.scrollTo(0, 0); }, [route]);
+  useEffect(() => { setSkipFocused(false); main.current?.focus({ preventScroll: true }); window.scrollTo(0, 0); }, [route]);
   useEffect(() => {
     const p = window.phantom?.solana;
     if (!p?.on || !p.removeListener) return;
     const changed = () => {
       invalidate("Wallet changed or disconnected. Private records were cleared; sign in again.");
-      // Best effort server revocation, never evidence of a successful logout when the request fails.
-      void request("/api/v1/auth/logout", "wallet_logout", ENVELOPE).catch(() => {});
+      // Queue behind an in-flight verify; a late logout must never clear a newer login cookie.
+      needsRevocation.current = true;
+      void cookieOperation(revokeSession).catch(() => setNotice("Private records cleared. Server revocation is unconfirmed; sign-in must confirm revocation before continuing."));
     };
     p.on("accountChanged", changed); p.on("disconnect", changed);
     return () => { p.removeListener("accountChanged", changed); p.removeListener("disconnect", changed); };
@@ -62,20 +77,35 @@ export function App() {
     authInFlight.current = true; setAuthBusy(true); setAuthError(""); setNotice("");
     const token = ++generation.current;
     try {
-      const result = await authenticate(getWallet(), () => generation.current === token);
+      const result = await cookieOperation(async () => {
+        if (needsRevocation.current) await revokeSession();
+        try {
+          const result = await authenticate(getWallet(), () => generation.current === token, () => { needsRevocation.current = true; });
+          needsRevocation.current = false;
+          return result;
+        } catch (error) {
+          if (needsRevocation.current) {
+            try { await revokeSession(); }
+            catch { setNotice("Private records cleared. Server revocation is unconfirmed; a new sign-in must confirm revocation first."); }
+          }
+          throw error;
+        }
+      });
       if (generation.current === token) { setSession(result); setMode("api"); setRecord(null); setWalletOpen(false); }
     } catch (error) { if (generation.current === token) setAuthError(message(error)); }
     finally { authInFlight.current = false; setAuthBusy(false); }
   }
   async function logout() {
     if (authInFlight.current) return;
-    setAuthBusy(true); setAuthError("");
+    authInFlight.current = true; setAuthBusy(true); setAuthError("");
+    invalidate("Signing out. Private records were cleared."); needsRevocation.current = true;
     try {
-      await request("/api/v1/auth/logout", "wallet_logout", ENVELOPE);
-      invalidate("Signed out. Private records were cleared.");
-      try { await getWallet().disconnect(); } catch { /* Session is revoked even if the extension cannot disconnect. */ }
-    } catch (error) { invalidate("Private records cleared. Server sign-out could not be confirmed; its session may remain until expiry."); setAuthError(message(error)); }
-    finally { setAuthBusy(false); }
+      await cookieOperation(revokeSession);
+      try { await getWallet().disconnect(); } catch { /* Server revocation already succeeded. */ }
+      await cookieTail.current;
+      setNotice("Signed out. Private records were cleared.");
+    } catch (error) { setNotice("Private records cleared. Server sign-out could not be confirmed; sign-in must confirm revocation first."); setAuthError(message(error)); }
+    finally { authInFlight.current = false; setAuthBusy(false); }
   }
   function changeMode(next: Mode) {
     readGeneration.current++; setLoading(false); setMode(next); setRecord(null); setLoadError("");
@@ -88,11 +118,12 @@ export function App() {
     const token = ++readGeneration.current, auth = generation.current, id = jobId.trim();
     setLoading(true);
     try {
-      const job = await request<Job>(`/api/v1/jobs/${id}`, "verification_job");
+      const paths = jobRoutes(id);
+      const job = await request<Job>(paths.job, "verification_job");
       if (job.data.jobId !== id) throw new ApiError("invalid_api_response");
       const results = await Promise.allSettled([
-        request<Milestone>(`/api/v1/jobs/${id}/milestone`, "milestone_state"),
-        request<Execution>(`/api/v1/jobs/${id}/execution`, "execution_status"),
+        request<Milestone>(paths.milestone, "milestone_state"),
+        request<Execution>(paths.execution, "execution_status"),
       ]);
       for (const result of results) if (result.status === "rejected" && result.reason instanceof ApiError && result.reason.status === 401) throw result.reason;
       if (token !== readGeneration.current || auth !== generation.current) return;
@@ -114,18 +145,18 @@ export function App() {
   const sampleLedger = <div className="sample-ledger" data-slot="milestone-ledger">
     <div className="ledger-head"><span>Openfield Studio</span><span className="muted">Fictional project</span></div>
     <h3>Analytics kit</h3><div className="ledger-summary"><span>Milestone ledger</span><span>DEMO tokens</span></div>
-    {demoInternships[0].milestones.map((m, i) => <a href="#internship/openfield" className="ledger-row" key={m.title}><span className="ordinal">{i + 1}</span><span><strong>{m.title}</strong><small>{m.evidence}</small></span><Status>{m.status}</Status></a>)}
+    {demoInternships[0].milestones.map((m, i) => <a href="#internship/openfield" onClick={() => changeMode("demo")} className="ledger-row" key={m.title}><span className="ordinal">{i + 1}</span><span><strong>{m.title}</strong><small>{m.evidence}</small></span><Status>{m.status}</Status></a>)}
     <div className="ledger-foot"><span>Reward payment</span><strong>Not established</strong></div>
     <p className="sample-label">Illustrative workflow. No live funds or chain observations.</p>
   </div>;
   return <>
-    <a className="skip" href="#main-content" onClick={e => { e.preventDefault(); main.current?.focus(); }}>Skip to content</a>
+    <a className="skip" href="#main-content" onClick={e => { e.preventDefault(); setSkipFocused(true); main.current?.focus(); }}>Skip to content</a>
     {isHome ? <header className="landing-nav container"><a className="brand" href="#home"><Mark />ProofOfWork</a><nav aria-label="Main navigation"><a href="#student">For students</a><a href="#organization">For organizations</a></nav><button className="quiet" aria-label={session ? "Wallet session for " + session.wallet : undefined} aria-expanded={walletOpen} onClick={() => setWalletOpen(!walletOpen)}>{session ? short(session.wallet) : "Connect wallet"}</button></header> : <aside className="sidebar"><a className="brand" href="#home"><Mark />ProofOfWork</a><nav aria-label="Workspace navigation"><a href="#student" aria-current={route === "student" ? "page" : undefined}>Student workspace</a><a href="#organization" aria-current={route === "organization" ? "page" : undefined}>Organization workspace</a><a href="#home">How it works</a></nav><div className="sidebar-note"><span className="network">Solana Devnet</span><p>Real work. Independent verification. Non-monetary DEMO tokens.</p><span className="muted">Hackathon prototype</span></div></aside>}
     <div className={isHome ? "" : "workspace"}>
       {!isHome && <header className="workspace-bar"><span>Workspace / {detail || route === "record" ? "Internship details" : role === "student" ? "Student" : "Organization"}</span><button className="quiet" aria-label={session ? "Wallet session for " + session.wallet : undefined} aria-expanded={walletOpen} onClick={() => setWalletOpen(!walletOpen)}>{session ? short(session.wallet) : "Connect wallet"}</button></header>}
       {walletOpen && <div className="container">{walletPanel}</div>}
       {notice && <div className="container"><p role="status" className="notice">{notice}</p></div>}
-      <main id="main-content" ref={main} tabIndex={-1}>
+      <main id="main-content" ref={main} tabIndex={-1} className={skipFocused ? "skip-target" : undefined} onBlur={() => setSkipFocused(false)}>
         {isHome ? <>
           <section className="hero container"><div className="hero-copy"><h1>Good work.<br />Proven, milestone<br />by milestone.</h1><p>Connect internship work, GitHub evidence and independent verification in one place.</p><div className="actions"><a className="button" href="#student">Explore student workspace</a><a className="text-link" href="#organization">View organization workspace</a></div></div>{sampleLedger}</section>
           <section className="process-band"><div className="container process-content"><h2>Every milestone leaves a record.</h2><ol className="process-list"><li><strong>Agree & fund</strong><span>Organizations define milestones and escrow Devnet DEMO tokens.</span></li><li><strong>Submit evidence</strong><span>Students complete the work and provide GitHub evidence.</span></li><li><strong>Verify independently</strong><span>The verifier checks the agreed conditions.</span></li><li><strong>Review settlement</strong><span>Verified milestones may become eligible for on-chain settlement.</span></li></ol></div></section>
@@ -150,9 +181,9 @@ export function App() {
               {session && !record && !loading && !loadError && <p className="empty-caption">No record loaded. Nothing is inferred from a connected wallet.</p>}
             </section>
             {record && <>
-              <section><div className="section-title"><h2>Verification job</h2><Status>{record.job.data.state}</Status></div><dl className="facts"><div><dt>Job ID</dt><dd>{record.job.data.jobId}</dd></div><div><dt>Verification outcome</dt><dd>{record.job.data.verificationOutcome}</dd></div><div><dt>Provenance</dt><dd>{words(record.job.provenance)}</dd></div><div><dt>GitHub evidence</dt><dd>Full verification evidence is not persisted by this API.</dd></div><div><dt>Reconciliation</dt><dd>{record.job.data.reconciliationRequired ? "Required" : "Not flagged"}</dd></div></dl></section>
+              <section><div className="section-title"><h2>Verification job</h2><Status>{record.job.data.state}</Status></div><dl className="facts"><div><dt>Job ID</dt><dd>{record.job.data.jobId}</dd></div><div><dt>Verification outcome</dt><dd>{record.job.data.verificationOutcome}</dd></div><div><dt>Provenance</dt><dd>{words(record.job.provenance)}</dd></div><div><dt>GitHub evidence</dt><dd>Full verification evidence is not persisted by this API.</dd></div><div><dt>Job reconciliation observation</dt><dd>{record.job.data.reconciliationRequired ? "Required" : "Not flagged in the job observation"}</dd></div></dl></section>
               {record.milestone && <section><div className="section-title"><h2>Milestone observation</h2><Status>{record.milestone.data.status}</Status></div><dl className="facts">{[["Milestone", record.milestone.data.address], ["Internship", record.milestone.data.internship], ["Recorded sponsor", record.milestone.data.sponsor], ["Recorded student", record.milestone.data.student], ["Reward allocation (raw token units)", record.milestone.data.rewardAmountRaw], ["Reward mint", record.milestone.data.rewardMint], ["Observation", words(record.milestone.provenance) + " / slot " + record.milestone.data.slot], ["Program deployment", "Not verified"], ["Escrow balance", "Not supplied by this API"], ["Settlement eligibility", record.milestone.data.status === "Verified" ? "Verified state observed; on-chain constraints still require validation" : "Not established"]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section>}
-              {record.execution && <section><h2>Execution observation</h2><p>{record.execution.data.phase ? words(record.execution.data.phase) : "No execution phase recorded"}. Provenance: {words(record.execution.provenance)}.</p><p>Offline test model only. Operational execution unavailable; no live transaction ID.</p></section>}
+              {record.execution && <section><h2>Execution observation</h2><p>{record.execution.data.phase ? words(record.execution.data.phase) : "No execution phase recorded"}. Provenance: {words(record.execution.provenance)}.</p><p>Execution reconciliation observation: {record.execution.data.reconciliationRequired ? "Required" : "Not flagged in the execution observation"}.</p><p>Offline test model only. Operational execution unavailable; no live transaction ID.</p>{record.execution.data.reconciliationRequired !== record.job.data.reconciliationRequired && <p role="status" className="notice">Reconciliation observations disagree. Reload this record before drawing a conclusion.</p>}</section>}
               {record.limitations.map((limit, i) => <p className="notice" key={i}>{limit}</p>)}
               <section className="settlement-note"><div><h2>Reward payment not established.</h2><p>Neither a verified state nor an offline execution record proves a payout. This frontend cannot transfer tokens.</p></div><Unavailable action="Settlement" /></section>
             </>}

@@ -1,3 +1,5 @@
+import { AUTH_ROUTES } from "./routes";
+export { uuid } from "./routes";
 /** Browser-only projection of the existing v1 API. No transaction or token capability. */
 export const VERSION = "proofwork-application-api-v1";
 export const ENVELOPE = { apiVersion: VERSION, cluster: "devnet" } as const;
@@ -10,7 +12,6 @@ export interface Observation<T> { data: T; provenance: string }
 export class ApiError extends Error {
   constructor(readonly code: string, readonly status = 0) { super(code); }
 }
-export const uuid = (s: string) => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(s);
 export async function request<T>(path: string, kind: string, body?: object, signal?: AbortSignal): Promise<Observation<T>> {
   let response: Response;
   try {
@@ -19,6 +20,7 @@ export async function request<T>(path: string, kind: string, body?: object, sign
   } catch { throw new ApiError("network_unavailable"); }
   let value;
   try { value = await response.json(); } catch { throw new ApiError("api_unavailable", response.status); }
+  if (value?.apiVersion !== VERSION || value.cluster !== "devnet") throw new ApiError("invalid_api_response");
   if (!response.ok) throw new ApiError(typeof value?.error?.code === "string" ? value.error.code : "api_unavailable", response.status);
   if (value?.apiVersion !== VERSION || value.cluster !== "devnet" || value.error !== null || value.data?.kind !== kind || typeof value.provenance !== "string")
     throw new ApiError("invalid_api_response");
@@ -26,7 +28,7 @@ export async function request<T>(path: string, kind: string, body?: object, sign
   const strings = (...keys: string[]) => keys.every(k => typeof d[k] === "string");
   const valid = kind === "verification_job" ? strings("jobId", "milestone", "state") && ["none", "passed", "rejected"].includes(d.verificationOutcome) && typeof d.reconciliationRequired === "boolean"
     : kind === "milestone_state" ? strings("address", "internship", "sponsor", "student", "rewardMint", "status", "rewardAmountRaw") && /^(0|[1-9][0-9]*)$/.test(d.rewardAmountRaw) && Number.isSafeInteger(d.slot) && d.programDeployment === "not_verified" && d.rewardPayment === "not_established"
-    : kind === "execution_status" ? strings("jobId") && (d.phase === null || typeof d.phase === "string") && d.operationalExecution === "unavailable" && d.liveTransactionId === null && d.rewardPayment === "not_established"
+    : kind === "execution_status" ? strings("jobId") && (d.phase === null || typeof d.phase === "string") && typeof d.reconciliationRequired === "boolean" && d.operationalExecution === "unavailable" && d.liveTransactionId === null && d.rewardPayment === "not_established"
     : kind === "wallet_logout" ? d.revoked === true
     : kind === "wallet_challenge" ? strings("wallet", "challengeId", "message", "issuedAt", "expiresAt")
     : kind === "wallet_session" ? strings("wallet", "expiresAt", "origin", "domain") : false;
@@ -46,7 +48,7 @@ export function message(error: unknown): string {
     https_required: "Wallet sign-in requires the approved same-origin HTTPS backend. Demonstration mode works locally.",
     wallet_changed: "The wallet changed or disconnected. Sign in again with the intended account.",
     unsupported_signature: "This wallet did not return a raw 64-byte Ed25519 signature. No fallback format was used.",
-    invalid_api_response: "The server returned an unsupported response. Nothing was signed or submitted.",
+    invalid_api_response: "The server returned an unsupported response. The sign-in or read could not be confirmed. This app does not sign transactions.",
     challenge_expired: "The challenge expired. Start sign-in again.",
     wallet_rejected: "The wallet request was cancelled or rejected. You can try again.",
   };
@@ -69,11 +71,11 @@ export function getWallet(): Phantom {
   if (!p?.isPhantom || typeof p.signMessage !== "function" || typeof p.connect !== "function") throw new ApiError("wallet_missing");
   return p;
 }
-export async function authenticate(p: Phantom, current: () => boolean): Promise<Session> {
+export async function authenticate(p: Phantom, current: () => boolean, beforeVerify: () => void = () => {}): Promise<Session> {
   if (location.protocol !== "https:") throw new ApiError("https_required");
   const connected = await p.connect(), wallet = connected.publicKey.toBase58();
   if (!current() || p.publicKey?.toBase58() !== wallet) throw new ApiError("wallet_changed");
-  const { data: challenge } = await request<Challenge>("/api/v1/auth/challenge", "wallet_challenge", { ...ENVELOPE, wallet });
+  const { data: challenge } = await request<Challenge>(AUTH_ROUTES.challenge, "wallet_challenge", { ...ENVELOPE, wallet });
   if (!current() || p.publicKey?.toBase58() !== wallet) throw new ApiError("wallet_changed");
   if (challenge.wallet !== wallet || challenge.signedMessageFormat !== "siws-raw-ed25519" || typeof challenge.message !== "string"
     || challenge.message.length > 4096 || !/^[a-f0-9]{64}$/.test(challenge.challengeId)) throw new ApiError("invalid_api_response");
@@ -89,7 +91,8 @@ export async function authenticate(p: Phantom, current: () => boolean): Promise<
   if (!current() || p.publicKey?.toBase58() !== wallet || signed.publicKey?.toBase58() !== wallet) throw new ApiError("wallet_changed");
   if (!(signed.signature instanceof Uint8Array) || signed.signature.length !== 64) throw new ApiError("unsupported_signature");
   if (Date.now() >= expiry) throw new ApiError("challenge_expired");
-  const { data: session } = await request<Session>("/api/v1/auth/verify", "wallet_session", { ...ENVELOPE, challengeId: challenge.challengeId,
+  beforeVerify();
+  const { data: session } = await request<Session>(AUTH_ROUTES.verify, "wallet_session", { ...ENVELOPE, challengeId: challenge.challengeId,
     messageBase64: encoded, signatureBase64: base64(signed.signature) });
   if (!current() || p.publicKey?.toBase58() !== wallet) throw new ApiError("wallet_changed");
   if (session.wallet !== wallet || session.origin !== location.origin || session.domain !== location.host || session.cluster !== "devnet"

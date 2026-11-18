@@ -5,7 +5,17 @@ React + TypeScript + esbuild. Run with Node 24 (CI pins 24.14.1).
 ```sh
 cd apps/web
 npm ci --ignore-scripts
+```
+
+Start the development server separately (it stays in the foreground):
+
+```sh
 npm run dev
+```
+
+Run validation independently; no server needs to be running:
+
+```sh
 npm run check
 npm run build
 npm run test:unit
@@ -13,7 +23,7 @@ npx --no-install playwright install chromium
 npm test
 ```
 
-The development server binds loopback only. `npm run preview` serves the production build locally. Browser binaries are test tooling; no wallets, keys or credentials are required. Playwright tests run desktop and mobile Chromium; the mobile project emulates an iPhone viewport, not WebKit or an actual device. `dist/`, browser traces and screenshots are ignored.
+The development server binds loopback only. `npm run preview` serves the production build locally. Browser binaries are test tooling; no wallets, keys or credentials are required. Playwright tests run desktop and mobile Chromium; the mobile project emulates an iPhone viewport, not WebKit or an actual device. `dist/`, `.dev/`, browser traces and screenshots are ignored.
 
 ## What works
 
@@ -46,3 +56,5 @@ Hallmark 2.0.0, reviewed source commit `04977e15f3dfd6ee4b74c887dac3eb52665d6c92
 Only React/React DOM are runtime dependencies. esbuild, TypeScript, React types and Playwright are pinned development dependencies. All installs use `--ignore-scripts`; lockfile and audit checks are required. The existing strict Node gate also scans this package with no frontend exceptions. Never run automatic audit fixes or weaken the retained root SDK policy.
 
 Vite 8.3.8 was evaluated but its glob dependency stack reported four high-severity findings from Picomatch. It was removed before publication rather than waived or downgraded to an obsolete Vite. The small Node development server serves explicit built assets on loopback only; it has no auth proxy, TLS bypass or operational backend. Reload the browser after edits.
+
+Development uses `.dev/` and refreshes HTML/favicon from source on reload. Production preview is read-only and requires `npm run build` first. Browser tests build first, start their own non-reused preview on loopback port 4174, and check that production artifact. Authentication cookie changes are serialized within this page; superseded proofs are revoked before a newer sign-in. Unconfirmed revocation blocks new sign-in until server confirmation (including expired-session 401). This is not cross-tab or distributed coordination. Job and execution reconciliation flags are separate observations; disagreement is shown and requires reload.
