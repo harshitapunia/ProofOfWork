@@ -76,3 +76,5 @@ the repository is not claimed vulnerability-free.
 The [operational journal foundation](docs/OPERATIONAL_JOURNAL_FOUNDATION.md) adds a pure admission/event model with evidence-bound replay. It does not persist operational records or activate signing/sending; its proposed schema requires separate approval.
 
 The [application API foundation](docs/APPLICATION_API_FOUNDATION.md) adds public process health and authorized internal job, milestone and offline-execution projections. Private HTTP routes remain unregistered pending approved application authentication; operational execution stays disabled.
+
+The [wallet-authenticated application API](docs/WALLET_AUTHENTICATED_APPLICATION_API.md) implements SIWS challenges, short-lived secure-cookie sessions and authorized read routes in explicit single-instance composition. The default CLI keeps private routes disabled; public deployment and the authentication protocol still require approval.

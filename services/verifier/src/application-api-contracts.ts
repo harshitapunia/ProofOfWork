@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { VerificationJob, ExecutionAttempt, Milestone, TransactionIntent } from "@proofwork/lifecycle";
 export const APPLICATION_API_VERSION = "proofwork-application-api-v1" as const;
 export type ApplicationResource = "job" | "milestone" | "execution";
-export type ApiProvenance = "none" | "process_health" | "lifecycle_v5_offline" | "offline_fixture" | "unverified_devnet_rpc";
+export type ApiProvenance = "none" | "process_health" | "lifecycle_v5_offline" | "offline_fixture" | "unverified_devnet_rpc" | "server_challenge" | "wallet_signature_session";
 export const READ_ONLY_PERMISSIONS = Object.freeze({ operationalAuthorization: false as const,
   signingAuthorization: "not_granted" as const, submissionAuthorized: false as const, retryAuthorized: false as const,
   reservationReleaseAuthorized: false as const, rpcAuthenticated: false as const, onChainStateVerified: false as const,
@@ -35,20 +35,31 @@ export interface MilestoneStateView {
 }
 export interface HealthView {
   readonly kind: "health"; readonly process: "serving"; readonly readiness: "limited";
-  readonly authentication: "application_adapter_not_registered"; readonly applicationReads: "http_routes_not_registered";
+  readonly authentication: "application_adapter_not_registered" | "wallet_signature_single_instance"; readonly applicationReads: "http_routes_not_registered" | "authenticated_read_routes";
   readonly storage: "not_probed"; readonly chain: "not_probed"; readonly execution: "disabled";
 }
-export type ApplicationView = VerificationJobView | ExecutionStatusView | MilestoneStateView | HealthView;
+export interface WalletChallengeView {
+  readonly kind: "wallet_challenge"; readonly challengeId: string; readonly wallet: string;
+  readonly issuedAt: string; readonly expiresAt: string; readonly message: string;
+  readonly signedMessageFormat: "siws-raw-ed25519"; readonly signInInput: Readonly<Record<string, string>>;
+}
+export interface WalletSessionView {
+  readonly kind: "wallet_session"; readonly wallet: string; readonly sessionId: string;
+  readonly authenticationMethod: "siws-raw-ed25519"; readonly origin: string; readonly domain: string;
+  readonly cluster: "devnet"; readonly authenticatedAt: string; readonly expiresAt: string;
+}
+export interface WalletLogoutView { readonly kind: "wallet_logout"; readonly revoked: true }
+export type ApplicationView = WalletChallengeView | WalletSessionView | WalletLogoutView | VerificationJobView | ExecutionStatusView | MilestoneStateView | HealthView;
 export interface ApiReply<T extends ApplicationView = ApplicationView> {
   readonly statusCode: number;
   readonly body: Readonly<{ apiVersion: typeof APPLICATION_API_VERSION; requestId: string; cluster: "devnet";
-    resource: Readonly<{ kind: ApplicationResource | "health" | "unknown"; id: string | null }>;
+    resource: Readonly<{ kind: ApplicationResource | "authentication" | "health" | "unknown"; id: string | null }>;
     availability: "available" | "unavailable" | "limited"; provenance: ApiProvenance;
     data: T | null; error: Readonly<{ code: string }> | null; permissions: typeof READ_ONLY_PERMISSIONS }>;
 }
 /** Server-generated tracing ID, never an identity/authentication token or caller echo. */
 export const applicationRequestId = () => randomUUID();
-export function applicationReply<T extends ApplicationView>(requestId: string, kind: ApplicationResource | "health" | "unknown", id: string | null,
+export function applicationReply<T extends ApplicationView>(requestId: string, kind: ApplicationResource | "authentication" | "health" | "unknown", id: string | null,
   statusCode: number, data: T | null, provenance: ApiProvenance, code: string | null = null,
   availability: ApiReply["body"]["availability"] = code ? "unavailable" : "available"): ApiReply<T> {
   return Object.freeze({ statusCode, body: Object.freeze({ apiVersion: APPLICATION_API_VERSION, requestId, cluster: "devnet",

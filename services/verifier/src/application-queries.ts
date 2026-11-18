@@ -5,7 +5,7 @@ import { key } from "./commitments.js";
 import { record, check, freeze } from "./read-only-observation-data.js";
 import { APPLICATION_API_VERSION, applicationReply, applicationRequestId, type ApiReply, type ApiProvenance,
   type ApplicationResource, type ApplicationView, type VerificationJobView, type ExecutionStatusView, type MilestoneStateView } from "./application-api-contracts.js";
-export interface ApplicationPrincipal { readonly subject: string; readonly role: "organization" | "student" | "operator"; readonly wallet: string | null }
+export interface ApplicationPrincipal { readonly subject: string; readonly role: "organization" | "student" | "operator" | "wallet"; readonly wallet: string | null }
 /** Trusted per-request composition dependency. A production implementation/identity policy is NOT provided. */
 export interface ApplicationAuthentication { resolve(): Promise<unknown> }
 export interface ApplicationChainSource { readonly reader: DevnetLifecycleReader; readonly provenance: "offline_fixture" | "unverified_devnet_rpc" }
@@ -38,13 +38,14 @@ export class ApplicationQueries {
     if (raw === null) throw new QueryError("authentication_required", 401);
     try { const p = record(raw, ["subject", "role", "wallet"]);
       check(typeof p.subject === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(p.subject)
-        && ["organization", "student", "operator"].includes(p.role));
+        && ["organization", "student", "operator", "wallet"].includes(p.role));
       if (p.role === "operator") check(p.wallet === null);
       else check(key(p.wallet).toBytes().some(n => n !== 0));
       return freeze(structuredClone(p) as unknown as ApplicationPrincipal);
     } catch { throw new QueryError("authentication_required", 401); }
   }
   private allowed(p: ApplicationPrincipal, j: VerificationJob): boolean {
+    if (p.role === "wallet") return p.wallet === j.bindings.sponsor || p.wallet === j.bindings.student;
     return p.role === "operator" || p.wallet === (p.role === "organization" ? j.bindings.sponsor : j.bindings.student);
   }
   private bundle(id: string, p: ApplicationPrincipal): Bundle {

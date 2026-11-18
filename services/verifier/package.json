@@ -18,9 +18,10 @@
     "build:dependencies": "npm --prefix ../../packages/finance-client run build && npm --prefix ../lifecycle run build"
   },
   "dependencies": {
-    "@solana/web3.js": "1.98.4",
+    "@noble/curves": "1.9.7",
+    "@proofwork/finance-client": "file:../../packages/finance-client",
     "@proofwork/lifecycle": "file:../lifecycle",
-    "@proofwork/finance-client": "file:../../packages/finance-client"
+    "@solana/web3.js": "1.98.4"
   },
   "devDependencies": {
     "@types/node": "24.0.0",
