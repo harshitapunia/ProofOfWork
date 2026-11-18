@@ -229,7 +229,9 @@ test("HTTP logout, expiry and revocation during awaited RPC suppress private res
   const f = await httpFixture(t), a = await f.login();
   f.hook(async method => { if (method === "getMultipleAccounts") f.sessions.revoke(readSessionCookie(a.cookie)); });
   assert.equal((await f.send(f.path("milestone"), { cookie: a.cookie })).status, 401);
-  const b = await f.login(); assert.equal((await f.post("/api/v1/auth/logout", { apiVersion: APPLICATION_API_VERSION, cluster: "devnet" }, b.cookie)).status, 200);
+  const b = await f.login(), logout = await f.post("/api/v1/auth/logout", { apiVersion: APPLICATION_API_VERSION, cluster: "devnet" }, b.cookie);
+  assert.equal(logout.status, 200);
+  assert(logout.headers["set-cookie"]?.some(cookie => cookie.startsWith(SESSION_COOKIE + "=;") && cookie.includes("Max-Age=0")));
   assert.equal((await f.send(f.path(), { cookie: b.cookie })).status, 401);
   const c = await f.login(); f.advance(SESSION_LIFETIME_MS); assert.equal((await f.send(f.path(), { cookie: c.cookie })).status, 401);
 });
