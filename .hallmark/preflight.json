@@ -1,0 +1,16 @@
+{
+  "source": "Nutlope/hallmark@04977e15f3dfd6ee4b74c887dac3eb52665d6c92",
+  "mode": "fast/app",
+  "base": "1fb100911bb5129a83c47a04d97712d427fc9f8e",
+  "preserve": [
+    "AGENTS.md:1",
+    "docs/TEAM_WORKFLOW.md:7",
+    "services/verifier/src/application-api-contracts.ts:3",
+    "services/verifier/src/wallet-application-http.ts:1"
+  ],
+  "introduce": [
+    "apps/web/ React frontend",
+    "frontend CI and strict audit scope"
+  ],
+  "material": "Actual product state model; clearly fictional samples; no supplied photos, testimonials or live identities."
+}

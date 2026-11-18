@@ -78,3 +78,14 @@ The [operational journal foundation](docs/OPERATIONAL_JOURNAL_FOUNDATION.md) add
 The [application API foundation](docs/APPLICATION_API_FOUNDATION.md) adds public process health and authorized internal job, milestone and offline-execution projections. Private HTTP routes remain unregistered pending approved application authentication; operational execution stays disabled.
 
 The [wallet-authenticated application API](docs/WALLET_AUTHENTICATED_APPLICATION_API.md) implements SIWS challenges, short-lived secure-cookie sessions and authorized read routes in explicit single-instance composition. The default CLI keeps private routes disabled; public deployment and the authentication protocol still require approval.
+
+
+## Hackathon frontend
+
+The React/TypeScript app lives in [apps/web](apps/web/README.md). With Node 24,
+run `npm --prefix apps/web ci --ignore-scripts`, then `npm --prefix apps/web run dev`
+and open the printed loopback URL. Demonstration mode uses explicitly fictional
+records. API mode uses the existing wallet-authenticated reads and requires the
+separately approved same-origin HTTPS composition; no write/transaction actions
+or backend activation changes are included. See the frontend README for build,
+checks, browser tests and remaining real-Devnet-demo configuration.

@@ -1,0 +1,29 @@
+{
+  "name": "@proofwork/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "node scripts/build.mjs --serve",
+    "check": "tsc --noEmit",
+    "build": "npm run check && node scripts/build.mjs",
+    "preview": "node scripts/build.mjs --preview",
+    "test": "npm run build && playwright test",
+    "test:unit": "node --test test/contracts.test.mjs"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@types/node": "24.0.0",
+    "typescript": "5.7.3",
+    "esbuild": "0.28.2"
+  }
+}
