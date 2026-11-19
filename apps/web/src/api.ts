@@ -3,6 +3,7 @@ export { uuid } from "./routes";
 /** Browser-only projection of the existing v1 API. No transaction or token capability. */
 export const VERSION = "proofwork-application-api-v1";
 export const ENVELOPE = { apiVersion: VERSION, cluster: "devnet" } as const;
+export interface Health { kind: "health"; readiness: "limited"; authentication: string; applicationReads: string; storage: "not_probed"; chain: "not_probed"; execution: "disabled" }
 export interface Session { kind: "wallet_session"; wallet: string; expiresAt: string; origin: string; domain: string; cluster: "devnet"; authenticationMethod: "siws-raw-ed25519" }
 export interface Challenge { kind: "wallet_challenge"; wallet: string; challengeId: string; message: string; issuedAt: string; expiresAt: string; signedMessageFormat: "siws-raw-ed25519" }
 export interface Job { kind: "verification_job"; jobId: string; milestone: string; state: string; verificationOutcome: "none" | "passed" | "rejected"; reconciliationRequired: boolean }
@@ -26,7 +27,8 @@ export async function request<T>(path: string, kind: string, body?: object, sign
     throw new ApiError("invalid_api_response");
   const d = value.data;
   const strings = (...keys: string[]) => keys.every(k => typeof d[k] === "string");
-  const valid = kind === "verification_job" ? strings("jobId", "milestone", "state") && ["none", "passed", "rejected"].includes(d.verificationOutcome) && typeof d.reconciliationRequired === "boolean"
+  const valid = kind === "health" ? d.readiness === "limited" && strings("authentication", "applicationReads") && d.storage === "not_probed" && d.chain === "not_probed" && d.execution === "disabled"
+    : kind === "verification_job" ? strings("jobId", "milestone", "state") && ["none", "passed", "rejected"].includes(d.verificationOutcome) && typeof d.reconciliationRequired === "boolean"
     : kind === "milestone_state" ? strings("address", "internship", "sponsor", "student", "rewardMint", "status", "rewardAmountRaw") && /^(0|[1-9][0-9]*)$/.test(d.rewardAmountRaw) && Number.isSafeInteger(d.slot) && d.programDeployment === "not_verified" && d.rewardPayment === "not_established"
     : kind === "execution_status" ? strings("jobId") && (d.phase === null || typeof d.phase === "string") && typeof d.reconciliationRequired === "boolean" && d.operationalExecution === "unavailable" && d.liveTransactionId === null && d.rewardPayment === "not_established"
     : kind === "wallet_logout" ? d.revoked === true

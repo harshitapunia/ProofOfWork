@@ -89,3 +89,9 @@ records. API mode uses the existing wallet-authenticated reads and requires the
 separately approved same-origin HTTPS composition; no write/transaction actions
 or backend activation changes are included. See the frontend README for build,
 checks, browser tests and remaining real-Devnet-demo configuration.
+
+
+## One local HTTPS application
+
+The frontend and real wallet/read APIs can now run on one loopback HTTPS listener.
+See [local application instructions](docs/LOCAL_APPLICATION.md) for explicit trusted TLS/database configuration, install/build commands and real HTTPS integration tests. After configuration, start everything with `npm --prefix services/verifier run start:application`. The original verifier CLI remains unchanged; no records are seeded or transactions enabled.

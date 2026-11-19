@@ -1,3 +1,4 @@
+export const HEALTH_PATH = "/api/v1/health";
 /** Existing backend routes only. Workspace selection conveys no server role. */
 export const AUTH_ROUTES = Object.freeze({
   challenge: "/api/v1/auth/challenge",

@@ -36,9 +36,10 @@ async function browserFixture(page: Page, settings: Settings & { hold?: string[]
       calls.push({ path, method, body: req.postDataJSON(), cookie: (await req.allHeaders()).cookie });
       const auth = ["/api/v1/auth/challenge", "/api/v1/auth/verify", "/api/v1/auth/logout"].includes(path);
       const job = `/api/v1/jobs/${ID}`;
-      if (!(auth || [job, job + "/milestone", job + "/execution"].includes(path))) return route.fulfill({ status: 404, json: reply(null, "none", "not_found") });
+      if (!(path === "/api/v1/health" || auth || [job, job + "/milestone", job + "/execution"].includes(path))) return route.fulfill({ status: 404, json: reply(null, "none", "not_found") });
       if (method !== (auth ? "POST" : "GET")) return route.fulfill({ status: 405, json: reply(null, "none", "method_not_allowed") });
       const gate = gates.get(path); if (gate) { gate.seen(); await gate.pending; }
+      if (path === "/api/v1/health") return route.fulfill({ json: reply({ kind: "health", readiness: "limited", authentication: "wallet_signature_single_instance", applicationReads: "authenticated_read_routes", storage: "not_probed", chain: "not_probed", execution: "disabled" }, "process_health") });
       if (settings.error) return route.fulfill({ status: settings.error, json: reply(null, "none", "application_unavailable") });
       if (path === "/api/v1/auth/challenge") {
         const wallet = req.postDataJSON().wallet;
