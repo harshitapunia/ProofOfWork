@@ -1,3 +1,4 @@
+import { prepareWorkflow } from "./workflow-preparation.js";
 /** Explicit composition only. The existing CLI/default server never constructs this service. */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { LifecycleStore } from "@proofwork/lifecycle";
@@ -46,8 +47,9 @@ export class WalletApplicationHttp {
       return true;
     }
     const match = /^\/api\/v1\/jobs\/([^/?]+)(?:\/(milestone|execution))?$/.exec(path);
+    const preparation = path === PREFIX + "workflow/prepare";
     const auth = [PREFIX + "auth/challenge", PREFIX + "auth/verify", PREFIX + "auth/logout"].includes(path);
-    if (!auth && !match) return false;
+    if (!auth && !match && !preparation) return false;
     let resource: ApplicationResource | "authentication" | "unknown" = auth ? "authentication" : "unknown", id: string | null = null;
     const fail = (code: string, status: number) => applicationReply(applicationRequestId(), resource, id, status, null, "none", code);
     this.#active++;
@@ -59,12 +61,20 @@ export class WalletApplicationHttp {
         || (request.headers.origin !== undefined && request.headers.origin !== this.sessions.origin)
         || (request.headers["sec-fetch-site"] !== undefined && request.headers["sec-fetch-site"] !== "same-origin"))
         throw new WalletAuthError("invalid_request", 400);
-      const method = auth ? "POST" : "GET";
+      const method = auth || preparation ? "POST" : "GET";
       if (request.method !== method) { response.setHeader("allow", method); throw new WalletAuthError("method_not_allowed", 405); }
-      if (auth && request.headers.origin !== this.sessions.origin) throw new WalletAuthError("invalid_request", 400);
+      if ((auth || preparation) && request.headers.origin !== this.sessions.origin) throw new WalletAuthError("invalid_request", 400);
       if (request.headers.authorization) throw new WalletAuthError("authentication_required", 401);
       const token = readSessionCookie(request.headers.cookie);
-      if (auth) {
+      if (preparation) {
+        const session = this.sessions.resolve(token);
+        if (!session) throw new WalletAuthError("authentication_required", 401);
+        const input = await this.body(request);
+        // Recheck after potentially slow body delivery; a revoked/expired cookie cannot prepare a plan.
+        if (this.sessions.resolve(token)?.sessionId !== session.sessionId) throw new WalletAuthError("authentication_required", 401);
+        this.reply(response, applicationReply(applicationRequestId(), "unknown", null, 200,
+          prepareWorkflow(input, session.wallet), "unsigned_finance_client"));
+      } else if (auth) {
         if (path.endsWith("/logout")) {
           if (!this.sessions.resolve(token)) throw new WalletAuthError("authentication_required", 401);
           const input = await this.body(request);

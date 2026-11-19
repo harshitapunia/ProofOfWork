@@ -1,8 +1,9 @@
+import type { WorkflowPreparation } from "./workflow-preparation.js";
 import { randomUUID } from "node:crypto";
 import type { VerificationJob, ExecutionAttempt, Milestone, TransactionIntent } from "@proofwork/lifecycle";
 export const APPLICATION_API_VERSION = "proofwork-application-api-v1" as const;
 export type ApplicationResource = "job" | "milestone" | "execution";
-export type ApiProvenance = "none" | "process_health" | "lifecycle_v5_offline" | "offline_fixture" | "unverified_devnet_rpc" | "server_challenge" | "wallet_signature_session";
+export type ApiProvenance = "none" | "process_health" | "lifecycle_v5_offline" | "offline_fixture" | "unverified_devnet_rpc" | "server_challenge" | "wallet_signature_session" | "unsigned_finance_client";
 export const READ_ONLY_PERMISSIONS = Object.freeze({ operationalAuthorization: false as const,
   signingAuthorization: "not_granted" as const, submissionAuthorized: false as const, retryAuthorized: false as const,
   reservationReleaseAuthorized: false as const, rpcAuthenticated: false as const, onChainStateVerified: false as const,
@@ -49,7 +50,7 @@ export interface WalletSessionView {
   readonly cluster: "devnet"; readonly authenticatedAt: string; readonly expiresAt: string;
 }
 export interface WalletLogoutView { readonly kind: "wallet_logout"; readonly revoked: true }
-export type ApplicationView = WalletChallengeView | WalletSessionView | WalletLogoutView | VerificationJobView | ExecutionStatusView | MilestoneStateView | HealthView;
+export type ApplicationView = WorkflowPreparation | WalletChallengeView | WalletSessionView | WalletLogoutView | VerificationJobView | ExecutionStatusView | MilestoneStateView | HealthView;
 export interface ApiReply<T extends ApplicationView = ApplicationView> {
   readonly statusCode: number;
   readonly body: Readonly<{ apiVersion: typeof APPLICATION_API_VERSION; requestId: string; cluster: "devnet";

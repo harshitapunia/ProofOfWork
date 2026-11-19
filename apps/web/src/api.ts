@@ -27,7 +27,11 @@ export async function request<T>(path: string, kind: string, body?: object, sign
     throw new ApiError("invalid_api_response");
   const d = value.data;
   const strings = (...keys: string[]) => keys.every(k => typeof d[k] === "string");
-  const valid = kind === "health" ? d.readiness === "limited" && strings("authentication", "applicationReads") && d.storage === "not_probed" && d.chain === "not_probed" && d.execution === "disabled"
+  const valid = kind === "workflow_preparation" ? d.stage === "unsigned_instruction_plan" && ["organization", "submission"].includes(d.action)
+    && strings("internship", "milestone", "requirementsHash") && Array.isArray(d.steps) && d.steps.length > 0 && d.steps.length <= 4
+    && d.terms && typeof d.terms === "object" && d.accountState === "not_observed" && d.idsReserved === false
+    && d.signed === false && d.broadcast === false && d.verification === "not_run" && d.proposalAuthority === "not_proven" && d.rewardPayment === "not_established"
+    : kind === "health" ? d.readiness === "limited" && strings("authentication", "applicationReads") && d.storage === "not_probed" && d.chain === "not_probed" && d.execution === "disabled"
     : kind === "verification_job" ? strings("jobId", "milestone", "state") && ["none", "passed", "rejected"].includes(d.verificationOutcome) && typeof d.reconciliationRequired === "boolean"
     : kind === "milestone_state" ? strings("address", "internship", "sponsor", "student", "rewardMint", "status", "rewardAmountRaw") && /^(0|[1-9][0-9]*)$/.test(d.rewardAmountRaw) && Number.isSafeInteger(d.slot) && d.programDeployment === "not_verified" && d.rewardPayment === "not_established"
     : kind === "execution_status" ? strings("jobId") && (d.phase === null || typeof d.phase === "string") && typeof d.reconciliationRequired === "boolean" && d.operationalExecution === "unavailable" && d.liveTransactionId === null && d.rewardPayment === "not_established"

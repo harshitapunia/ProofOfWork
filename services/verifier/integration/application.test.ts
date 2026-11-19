@@ -1,3 +1,5 @@
+import { manifest as workflowManifest } from "../test/helpers.js";
+import { evidenceHash as workflowEvidenceHash } from "../src/commitments.js";
 /** Actual HTTPS + existing handlers/store/decoders. Keys are disposable RAM-only test keys. */
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
@@ -181,4 +183,41 @@ test("a wrong Ed25519 proof is rejected and cannot replay its consumed challenge
   proof.signatureBase64 = sign(null, Buffer.from(view.message), f.sponsor.privateKey).toString("base64");
   assert.equal((await f.send("/api/v1/auth/verify", proof)).status, 401);
   assert.equal(f.cookies.has("__Host-proofwork_session"), false);
+});
+
+function workflowInput(f: Awaited<ReturnType<typeof fixture>>) {
+ const now=Math.floor(Date.now()/1000);
+ return {...envelope,action:"organization",terms:{title:"Fictional workflow",note:"Offline fixture only",sponsor:f.sponsor.wallet,student:f.student.wallet,verifier:f.other.wallet,
+ internshipId:"12",milestoneId:"34",rewardAmountRaw:"1000000",assignBy:String(now+3600),submitBy:String(now+7200),owner:"proofwork-demo",repository:"assignment",manifest:JSON.stringify(workflowManifest())}};
+}
+test("actual HTTPS organization-to-student preparation journey uses the real finance builders without persistent effects",async t=>{
+ const f=await fixture(t),before=f.base.snapshot(),walletBefore=f.s.jobs.getJob(f.job.jobId),input=workflowInput(f),path="/api/v1/workflow/prepare";
+ assert.equal((await f.send(path,input)).status,401);await f.login();
+ const org=await f.send(path,input);assert.equal(org.status,200);assert.equal(org.body.data.steps.length,4);assert.equal(org.body.provenance,"unsigned_finance_client");
+ assert.equal(org.body.data.steps[0].instructions[0].keys[0].pubkey,f.sponsor.wallet);
+ assert.equal(org.body.permissions.submissionAuthorized,false);assert.equal(org.body.data.broadcast,false);
+ await f.send("/api/v1/auth/logout",envelope);await f.login(f.student);
+ const evidence={contributorId:"2002",commit:"cd".repeat(20),nonce:"ef".repeat(32),pullRequest:7};
+ const request={...envelope,action:"submission",terms:org.body.data.terms,evidence};
+ const first=await f.send(path,request),second=await f.send(path,request);assert.equal(first.status,200);assert.deepEqual(first.body.data,second.body.data);
+ assert.equal(first.body.data.evidenceHash,workflowEvidenceHash({milestone:org.body.data.milestone,student:f.student.wallet,requirementsHash:org.body.data.requirementsHash,repositoryId:"1001",...evidence}).toString("hex"));
+ assert.equal(first.body.data.steps[0].instructions[0].keys[0].pubkey,f.student.wallet);
+ assert.equal(first.body.data.rewardPayment,"not_established");assert.equal(first.body.data.verification,"not_run");assert.equal(first.body.data.accountState,"not_observed");
+ assert.deepEqual(f.base.snapshot(),before);assert.deepEqual(f.s.jobs.getJob(f.job.jobId),walletBefore);assert.deepEqual(f.calls,[]);assert.equal(f.legacyCalls(),0);
+});
+test("workflow preparation enforces exact origin, method, session role and expiry",async t=>{
+ const f=await fixture(t),input=workflowInput(f),path="/api/v1/workflow/prepare";await f.login(f.other);
+ assert.equal((await f.send(path,input)).status,403);
+ assert.equal((await f.send(path,input,{noOrigin:true})).status,400);
+ assert.equal((await f.send(path,input,{headers:{origin:"https://unrelated.example.test"}})).status,400);
+ assert.equal((await f.send(path,undefined)).status,405);
+ assert.equal((await f.send(path,input,{headers:{authorization:"Bearer test-only"}})).status,401);
+ await f.send("/api/v1/auth/logout",envelope);await f.login();f.advance(SESSION_LIFETIME_MS);assert.equal((await f.send(path,input)).status,401);
+});
+test("workflow missing manifests, malformed inputs and oversized bodies fail closed",async t=>{
+ const f=await fixture(t),input=workflowInput(f),path="/api/v1/workflow/prepare";await f.login();
+ for(const terms of [{...input.terms,manifest:""},{...input.terms,student:"bad-wallet"},{...input.terms,rewardAmountRaw:"1.25"},{...input.terms,submitBy:input.terms.assignBy}]) {
+  const out=await f.send(path,{...input,terms});assert.equal(out.status,400);assert.equal(out.body.data,null);
+ }
+ assert.equal((await f.send(path,{...input,terms:{...input.terms,note:"x".repeat(9000)}})).status,413);
 });

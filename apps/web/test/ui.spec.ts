@@ -7,7 +7,7 @@ const WALLET = "mock-browser-wallet"; // Deliberately non-operational provider s
 const ID = "11111111-1111-4111-8111-111111111111";
 const VERSION = "proofwork-application-api-v1";
 const reply = (data: object | null, provenance = "server_challenge", error: string | null = null) => ({ apiVersion: VERSION, cluster: "devnet", requestId: ID, data, provenance, error: error ? { code: error } : null });
-type Settings = { reject?: boolean; expires?: number; altered?: boolean; badSignature?: boolean; challengeExpired?: boolean; error?: number; delay?: number; jobError?: number; logoutError?: number; invalidVerify?: boolean };
+type Settings = { workflowError?: number; reject?: boolean; expires?: number; altered?: boolean; badSignature?: boolean; challengeExpired?: boolean; error?: number; delay?: number; jobError?: number; logoutError?: number; invalidVerify?: boolean };
 async function browserFixture(page: Page, settings: Settings & { hold?: string[]; reconciliation?: boolean } = {}) {
   const calls: { path: string; method: string; body: any; cookie?: string }[] = [];
   const gates = new Map((settings.hold ?? []).map(path => {
@@ -34,6 +34,16 @@ async function browserFixture(page: Page, settings: Settings & { hold?: string[]
     if (path.startsWith("/api/")) {
       const method = req.method();
       calls.push({ path, method, body: req.postDataJSON(), cookie: (await req.allHeaders()).cookie });
+      // UI-only response fixture. Actual authorization/builders/hashes are exercised by real HTTPS/backend tests.
+      if (path === "/api/v1/workflow/prepare") {
+        if (method !== "POST") return route.fulfill({status:405,json:reply(null,"none","method_not_allowed")});
+        if (settings.workflowError) return route.fulfill({status:settings.workflowError,json:reply(null,"none",settings.workflowError===401?"authentication_required":"application_unavailable")});
+        const body=req.postDataJSON();
+        return route.fulfill({json:reply({kind:"workflow_preparation",action:body.action,stage:"unsigned_instruction_plan",terms:body.terms,
+          internship:"synthetic-internship-pda",milestone:"synthetic-milestone-pda",requirementsHash:"ab".repeat(32),evidenceHash:body.evidence?"cd".repeat(32):null,
+          steps:(body.action==="organization"?["create_internship","create_milestone","fund_milestone","assign_student"]:["submit_milestone"]).map(action=>({action,feePayer:WALLET,instructions:[]})),
+          accountState:"not_observed",idsReserved:false,signed:false,broadcast:false,verification:"not_run",proposalAuthority:"not_proven",rewardPayment:"not_established"},"unsigned_finance_client")});
+      }
       const auth = ["/api/v1/auth/challenge", "/api/v1/auth/verify", "/api/v1/auth/logout"].includes(path);
       const job = `/api/v1/jobs/${ID}`;
       if (!(path === "/api/v1/health" || auth || [job, job + "/milestone", job + "/execution"].includes(path))) return route.fulfill({ status: 404, json: reply(null, "none", "not_found") });
@@ -245,4 +255,48 @@ test("unsupported verification response does not deny that a proof was signed an
   expect(await page.evaluate(() => (window as any).signedMessages.length)).toBe(1);
   expect(f.calls.some(c => c.path.endsWith("/logout"))).toBe(true);
   expect((await page.context().cookies()).some(c => c.name === "__Host-proofwork_session")).toBe(false);
+});
+
+async function organizationForm(page:Page) {
+ await browserFixture(page);await page.getByRole("link",{name:"Organization workspace",exact:true}).click();
+ await page.getByRole("button",{name:"Backend API",exact:true}).click();await signIn(page);
+ await expect(page.getByRole("heading",{name:"Prepare an internship & milestone"})).toBeVisible();
+ for(const [name,value] of Object.entries({title:"Fictional browser internship",student:"2".repeat(32),verifier:"3".repeat(32),internshipId:"1",milestoneId:"2",rewardAmountRaw:"1000000",assignBy:"2099-01-01T10:00",submitBy:"2099-01-02T10:00",owner:"fixture-owner",repository:"fixture-repository",manifest:'{"browser":"UI-only fixture"}'})) await page.locator(`[name="${name}"]`).fill(value);
+}
+test("organization prepares a clearly unsigned plan and clears it when terms change",async({page})=>{
+ await organizationForm(page);await page.getByRole("button",{name:"Prepare organization instructions"}).click();
+ await expect(page.getByRole("heading",{name:"Unsigned instruction plan prepared"})).toBeVisible();
+ await expect(page.getByText("Verification not run. Reward payment not established.",{exact:true})).toBeVisible();
+ await expect(page.getByRole("button",{name:"Sign & broadcast unavailable"})).toBeDisabled();
+ await expect(page.getByRole("button",{name:"Run GitHub verification unavailable"})).toBeDisabled();
+ const plan=JSON.parse(await page.getByLabel("Prepared instruction JSON").inputValue());expect(plan.steps).toHaveLength(4);expect(plan.signed).toBe(false);
+ await page.locator('[name="rewardAmountRaw"]').fill("2000000");await expect(page.getByLabel("Prepared instruction JSON")).toHaveCount(0);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+for(const [name,value] of [["student","invalid-wallet"],["rewardAmountRaw","1.5"],["milestoneId","-1"]])test("organization HTML validation blocks invalid "+name,async({page})=>{
+ await organizationForm(page);let sent=0;page.on("request",r=>{if(r.url().endsWith("/workflow/prepare"))sent++;});
+ await page.locator(`[name="${name}"]`).fill(value);await page.getByRole("button",{name:"Prepare organization instructions"}).click();expect(sent).toBe(0);await expect(page.getByLabel("Prepared instruction JSON")).toHaveCount(0);
+});
+test("deadline relationship errors do not prepare a transaction",async({page})=>{
+ await organizationForm(page);await page.locator('[name="assignBy"]').fill("2099-01-03T10:00");await page.getByRole("button",{name:"Prepare organization instructions"}).click();
+ await expect(page.getByRole("alert")).toContainText("assignment before submission");await expect(page.getByLabel("Prepared instruction JSON")).toHaveCount(0);
+});
+test("student imports a proposal and prepares evidence without claiming authorization or payment",async({page})=>{
+ await organizationForm(page);await page.getByRole("button",{name:"Prepare organization instructions"}).click();
+ const plan=await page.getByLabel("Prepared instruction JSON").inputValue();
+ await page.getByRole("link",{name:"Student workspace",exact:true}).click();
+ await page.locator('[name="proposal"]').fill(plan);
+ for(const [name,value] of Object.entries({contributorId:"2002",commit:"cd".repeat(20),nonce:"ef".repeat(32),pullRequest:"7"}))await page.locator(`[name="${name}"]`).fill(value);
+ await page.getByRole("button",{name:"Validate evidence & prepare submission"}).click();
+ await expect(page.getByRole("heading",{name:"Unsigned instruction plan prepared"})).toBeVisible();
+ const prepared=JSON.parse(await page.getByLabel("Prepared instruction JSON").inputValue());expect(prepared.steps[0].action).toBe("submit_milestone");expect(prepared.rewardPayment).toBe("not_established");
+ await page.getByRole("button",{name:"Wallet session for "+WALLET,exact:true}).click();
+ await page.getByRole("button",{name:"Sign out",exact:true}).click();await expect(page.getByLabel("Prepared instruction JSON")).toHaveCount(0);
+});
+test("expired authentication rejects workflow preparation and clears private form state",async({page})=>{
+ await browserFixture(page,{workflowError:401});await page.getByRole("button",{name:"Backend API",exact:true}).click();await signIn(page);
+ await page.locator('[name="proposal"]').fill('{"terms":{}}');
+ for(const [name,value] of Object.entries({contributorId:"1",commit:"cd".repeat(20),nonce:"ef".repeat(32),pullRequest:"1"}))await page.locator(`[name="${name}"]`).fill(value);
+ await page.getByRole("button",{name:"Validate evidence & prepare submission"}).click();
+ await expect(page.getByRole("heading",{name:"Sign in to read your records."})).toBeVisible();await expect(page.locator('[name="nonce"]')).toHaveCount(0);
 });
