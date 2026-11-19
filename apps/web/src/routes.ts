@@ -11,3 +11,5 @@ export function jobRoutes(id: string) {
   const job = `/api/v1/jobs/${id}`;
   return Object.freeze({ job, milestone: job + "/milestone", execution: job + "/execution" });
 }
+
+export const WORKFLOW_PATH = "/api/v1/workflow/prepare";
