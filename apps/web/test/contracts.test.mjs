@@ -1,14 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { AUTH_ROUTES, jobRoutes } from '../src/routes.ts';
-test('browser paths and methods match exact backend dispatch for all six routes', () => {
+import { AUTH_ROUTES, jobRoutes, HEALTH_PATH } from '../src/routes.ts';
+test('browser paths and methods match exact backend dispatch for all seven routes', () => {
   const api = readFileSync('src/api.ts', 'utf8');
   const backend = readFileSync('../../services/verifier/src/application-api-contracts.ts', 'utf8');
   assert.match(backend, /APPLICATION_API_VERSION = "proofwork-application-api-v1"/);
   assert.match(api, /VERSION = "proofwork-application-api-v1"/);
   const routes = readFileSync('../../services/verifier/src/wallet-application-http.ts', 'utf8');
   const prefix = routes.match(/const PREFIX = "([^"]+)";/)?.[1]; assert.equal(prefix, '/api/v1/');
+  assert.equal(HEALTH_PATH, prefix + 'health');
+  assert.match(routes, /if \(path === PREFIX \+ \"health\"\)/);
   const declaration = routes.match(/const auth = \[([^\]]+)\]\.includes\(path\);/)?.[1]; assert(declaration);
   const authPaths = [...declaration.matchAll(/PREFIX \+ "([^"]+)"/g)].map(m => prefix + m[1]);
   assert.deepEqual(authPaths, Object.values(AUTH_ROUTES));

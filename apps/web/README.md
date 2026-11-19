@@ -58,3 +58,8 @@ Only React/React DOM are runtime dependencies. esbuild, TypeScript, React types 
 Vite 8.3.8 was evaluated but its glob dependency stack reported four high-severity findings from Picomatch. It was removed before publication rather than waived or downgraded to an obsolete Vite. The small Node development server serves explicit built assets on loopback only; it has no auth proxy, TLS bypass or operational backend. Reload the browser after edits.
 
 Development uses `.dev/` and refreshes HTML/favicon from source on reload. Production preview is read-only and requires `npm run build` first. Browser tests build first, start their own non-reused preview on loopback port 4174, and check that production artifact. Authentication cookie changes are serialized within this page; superseded proofs are revoked before a newer sign-in. Unconfirmed revocation blocks new sign-in until server confirmation (including expired-session 401). This is not cross-tab or distributed coordination. Job and execution reconciliation flags are separate observations; disagreement is shown and requires reload.
+
+
+## Integrated local application
+
+Use the [single-origin HTTPS entry point](../../docs/LOCAL_APPLICATION.md) to serve this production build together with the existing real wallet/read handlers. Configure trusted TLS files, the exact local origin and a genuine existing ledger, then run the documented one startup command. No Vite/dev proxy, insecure-cookie mode or authentication bypass is needed. API mode now probes the existing public limited health route; it does not claim storage/chain readiness.

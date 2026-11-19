@@ -51,6 +51,9 @@ jobs:
       - run: npm --prefix services/verifier run build
       - name: Validate verifier, wallet-authenticated API, journal model and read-only integration
         run: npm --prefix services/verifier test
+      - run: npm --prefix apps/web ci --ignore-scripts
+      - name: Validate actual same-origin HTTPS application and Ed25519 authentication
+        run: npm --prefix services/verifier run test:application
       - name: Validate lifecycle storage, fencing, v5 execution ledger and migrations
         run: |
           npm --prefix services/lifecycle run check

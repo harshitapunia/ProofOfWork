@@ -9,14 +9,13 @@ import { request } from "node:http";
 import { once } from "node:events";
 import { PublicKey } from "@solana/web3.js";
 import { DevnetLifecycleReader } from "@proofwork/lifecycle";
-import { deriveInternship, deriveMilestone, deriveSubmission, deriveCompletion, deriveVault, deriveVaultAuthority,
-  SETTLEMENT_DEVNET_GENESIS } from "@proofwork/finance-client";
+import { SETTLEMENT_DEVNET_GENESIS } from "@proofwork/finance-client";
 import { WalletSessions, WalletAuthError, CHALLENGE_LIFETIME_MS, SESSION_LIFETIME_MS, SESSION_COOKIE, CHALLENGE_COOKIE,
   readSessionCookie, sessionCookie } from "../src/wallet-sessions.js";
 import { WalletApplicationHttp } from "../src/wallet-application-http.js";
 import { createVerifierServer } from "../src/server.js";
 import { APPLICATION_API_VERSION, type WalletChallengeView } from "../src/application-api-contracts.js";
-import { ledgerFixture } from "./read-only-helpers.js";
+import { walletLedgerFixture } from "./wallet-ledger-helpers.js";
 const ORIGIN = "https://application.example.test", DOMAIN = "application.example.test"; // Test-only, not configuration.
 function pair() { const p = generateKeyPairSync("ed25519"); return { ...p, wallet: new PublicKey(p.publicKey.export({ format: "der", type: "spki" }).subarray(-32)).toBase58() }; }
 function authFixture() {
@@ -142,23 +141,7 @@ test("missing, invented or other requester cookies cannot consume a valid login 
 
 async function httpFixture(t: TestContext, available = true) {
   const auth = authFixture(), student = pair(), other = pair(), dir = mkdtempSync(join(tmpdir(), "pow-wallet-http-"));
-  const base = ledgerFixture(join(dir, "ledger.sqlite")), s = base.s, old = base.job.bindings;
-  const internship = deriveInternship(auth.p.wallet, BigInt(old.internshipId));
-  const milestone = deriveMilestone(internship[0], BigInt(old.milestoneId));
-  const submission = deriveSubmission(milestone[0]);
-  const bindings = { ...old, sponsor: auth.p.wallet, student: student.wallet, internship: internship[0].toBase58(), milestone: milestone[0].toBase58(), submission: submission[0].toBase58() };
-  const job = s.jobs.createOrGetJob("wallet_job", bindings);
-  const otherInternship = deriveInternship(other.wallet, BigInt(old.internshipId));
-  const otherMilestone = deriveMilestone(otherInternship[0], BigInt(old.milestoneId));
-  const otherJob = s.jobs.createOrGetJob("other_wallet_job", { ...bindings, sponsor: other.wallet, internship: otherInternship[0].toBase58(), milestone: otherMilestone[0].toBase58(), submission: deriveSubmission(otherMilestone[0])[0].toBase58() });
-  const accounts = new Map<string, unknown>();
-  const rawI = Buffer.from(base.accounts.internship.account!.data[0], "base64"), rawM = Buffer.from(base.accounts.milestone.account!.data[0], "base64"), rawS = Buffer.from(base.accounts.submission.account!.data[0], "base64");
-  new PublicKey(bindings.sponsor).toBuffer().copy(rawI, 8); rawI[48] = internship[1];
-  for (const [offset, value] of [[8, bindings.internship], [40, bindings.sponsor], [72, bindings.student], [168, bindings.submission]] as const) new PublicKey(value).toBuffer().copy(rawM, offset);
-  rawM[273] = milestone[1]; rawM[274] = deriveVault(milestone[0])[1]; rawM[275] = deriveVaultAuthority(milestone[0])[1];
-  new PublicKey(bindings.milestone).toBuffer().copy(rawS, 8); new PublicKey(bindings.student).toBuffer().copy(rawS, 40); rawS[112] = submission[1];
-  for (const [address, data] of [[bindings.internship, rawI], [bindings.milestone, rawM], [bindings.submission, rawS]] as const) accounts.set(address, { owner: old.programId, executable: false, data: [data.toString("base64"), "base64"] });
-  accounts.set(deriveCompletion(milestone[0])[0].toBase58(), null);
+  const { s, job, otherJob, accounts } = walletLedgerFixture(dir, auth.p.wallet, student.wallet, other.wallet);
   let hook = async (_method: string) => {}; const calls: string[] = [];
   const chain = { provenance: "offline_fixture" as const, reader: new DevnetLifecycleReader("finalized", async (_url, init) => {
     const msg = JSON.parse(init!.body as string); calls.push(msg.method); await hook(msg.method);

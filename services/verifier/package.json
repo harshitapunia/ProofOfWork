@@ -15,7 +15,10 @@
     "test:github:live": "npm run build && node dist/test/live-github.js",
     "test:devnet:live": "npm run build && node dist/test/live-devnet.js",
     "test:blockhash:live": "npm run build && node dist/test/live-blockhash.js",
-    "build:dependencies": "npm --prefix ../../packages/finance-client run build && npm --prefix ../lifecycle run build"
+    "build:dependencies": "npm --prefix ../../packages/finance-client run build && npm --prefix ../lifecycle run build",
+    "start:application": "node --env-file-if-exists=.env.local dist/src/application-main.js",
+    "test:application": "npm run build:application && node --test dist/integration/*.test.js",
+    "build:application": "npm --prefix ../../apps/web run build && npm run build"
   },
   "dependencies": {
     "@noble/curves": "1.9.7",

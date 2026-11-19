@@ -1,14 +1,14 @@
 import type { WalletApplicationHttp } from "./wallet-application-http.js";
 import { applicationHealth, applicationReply, applicationRequestId } from "./application-api-contracts.js";
-import { createServer } from "node:http";
+import { createServer, type RequestListener } from "node:http";
 import { fileURLToPath } from "node:url";
 import { GitHub } from "./github.js";
 import { DevnetReader } from "./chain.js";
 import { DockerRunner } from "./runner.js";
 import { VerifierService } from "./service.js";
 
-export function createVerifierServer(service: Pick<VerifierService, "verify">, application?: WalletApplicationHttp) {
-const server = createServer(async (request, response) => {
+export function createVerifierHandler(service: Pick<VerifierService, "verify">, application?: WalletApplicationHttp): RequestListener {
+return async (request, response) => {
   response.setHeader("content-type", "application/json");
   response.setHeader("cache-control", "no-store");
   response.setHeader("x-content-type-options", "nosniff");
@@ -43,7 +43,11 @@ const server = createServer(async (request, response) => {
     const result = await service.verify(input, auth.slice(7));
     response.writeHead(200).end(JSON.stringify(result));
   } catch { response.writeHead(400).end('{"error":"invalid_request"}'); }
-});
+};
+}
+
+export function createVerifierServer(service: Pick<VerifierService, "verify">, application?: WalletApplicationHttp) {
+const server = createServer(createVerifierHandler(service, application));
 server.requestTimeout = 15_000;
 server.headersTimeout = 10_000;
 return server;

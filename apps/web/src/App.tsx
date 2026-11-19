@@ -1,6 +1,6 @@
-import { AUTH_ROUTES, jobRoutes } from "./routes";
+import { AUTH_ROUTES, jobRoutes, HEALTH_PATH } from "./routes";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ApiError, ENVELOPE, authenticate, getWallet, message, request, uuid, type Execution, type Job, type Milestone, type Observation, type Session } from "./api";
+import { ApiError, ENVELOPE, authenticate, getWallet, message, request, uuid, type Health, type Execution, type Job, type Milestone, type Observation, type Session } from "./api";
 import { demoInternships } from "./demo";
 
 type Mode = "demo" | "api";
@@ -23,6 +23,8 @@ export function App() {
   const [jobId, setJobId] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [health, setHealth] = useState<Health | null>(null);
+  const [healthError, setHealthError] = useState(false);
   const generation = useRef(0), readGeneration = useRef(0);
   const authInFlight = useRef(false);
   const cookieTail = useRef<Promise<void>>(Promise.resolve());
@@ -72,6 +74,12 @@ export function App() {
     window.addEventListener("focus", expires); document.addEventListener("visibilitychange", expires);
     return () => { clearTimeout(timer); window.removeEventListener("focus", expires); document.removeEventListener("visibilitychange", expires); };
   }, [session]);
+  useEffect(() => {
+    if (mode !== "api") return;
+    let active = true; setHealth(null); setHealthError(false);
+    void request<Health>(HEALTH_PATH, "health").then(result => { if (active) setHealth(result.data); }, () => { if (active) setHealthError(true); });
+    return () => { active = false; };
+  }, [mode]);
   async function login() {
     if (authInFlight.current) return;
     authInFlight.current = true; setAuthBusy(true); setAuthError(""); setNotice("");
@@ -175,7 +183,7 @@ export function App() {
             <section><div className="section-title"><h2>{role === "student" ? "Next in your workflow" : "Milestone activity"}</h2><a className="text-link" href="#internship/openfield">View internship</a></div><div className="table-scroll" tabIndex={0} aria-label="Sample milestone activity"><table><thead><tr><th>Milestone</th><th>GitHub evidence</th><th>Verification</th><th>Reward allocation</th></tr></thead><tbody>{demoInternships[0].milestones.map(m => <tr key={m.title}><th scope="row">{m.title}</th><td>{m.status === "Assigned" ? "Not submitted" : "Sample evidence"}</td><td><Status>{m.status}</Status></td><td className="amount">{m.amount} DEMO</td></tr>)}</tbody></table></div></section>
             <div className="bottom-note"><p>Funding and reward figures are fictional. No token balances or payments are established.</p><Unavailable action={role === "student" ? "Submit work" : "Create internship"} /></div>
           </> : <>
-            <section className="api-reader"><h2>Open an authorized record</h2><p>No listing API is available. Enter a job ID shared by your coordinator. Access is checked against the recorded sponsor or student wallet, independently of this workspace view.</p>
+            <section className="api-reader"><h2>Open an authorized record</h2><p aria-label="Backend connection">{healthError ? "Backend health unavailable. Check the integrated HTTPS server." : !health ? "Checking backend connection…" : health.authentication === "wallet_signature_single_instance" && health.applicationReads === "authenticated_read_routes" ? "Backend reachable. Wallet reads are registered; storage and chain are not probed by health." : "Backend reachable, but wallet read routes are not registered."}</p><p>No listing API is available. Enter a job ID shared by your coordinator. Access is checked against the recorded sponsor or student wallet, independently of this workspace view.</p>
               {!session ? <div className="empty"><h3>Sign in to read your records.</h3><p>No private data has been loaded.</p><button onClick={() => setWalletOpen(true)}>Open wallet sign-in</button></div> : <form onSubmit={e => void readJob(e)}><label htmlFor="job-id">Verification job ID</label><div className="input-row"><input id="job-id" value={jobId} onChange={e => setJobId(e.target.value)} placeholder="Job UUID from your coordinator" autoComplete="off" required maxLength={36} /><button disabled={loading} aria-busy={loading}>{loading ? "Loading record…" : "Load record"}</button></div></form>}
               {loading && <p role="status">Loading authorized job, milestone and execution observations…</p>}{loadError && <p role="alert" className="error">{loadError}</p>}
               {session && !record && !loading && !loadError && <p className="empty-caption">No record loaded. Nothing is inferred from a connected wallet.</p>}
