@@ -1,3 +1,4 @@
+import {WalletExecutionReviewer,ReadOnlyWalletRpc} from "../src/devnet-wallet-review.js";
 import { manifest as workflowManifest } from "../test/helpers.js";
 import { evidenceHash as workflowEvidenceHash } from "../src/commitments.js";
 /** Actual HTTPS + existing handlers/store/decoders. Keys are disposable RAM-only test keys. */
@@ -44,7 +45,7 @@ async function freePort() {
   const port = (s.address() as import("node:net").AddressInfo).port;
   await new Promise<void>(resolve => s.close(() => resolve())); return port;
 }
-async function fixture(t: TestContext, mode: "fixture" | "disabled" | "missing" = "fixture") {
+async function fixture(t: TestContext, mode: "fixture" | "disabled" | "missing" = "fixture", walletReview?: WalletExecutionReviewer) {
   const tls = await (tlsPromise ??= certificate()), sponsor = pair(), student = pair(), other = pair();
   const dir = mkdtempSync(join(tmpdir(), "proofwork-https-"));
   const ledger = walletLedgerFixture(dir, sponsor.wallet, student.wallet, other.wallet);
@@ -59,7 +60,7 @@ async function fixture(t: TestContext, mode: "fixture" | "disabled" | "missing" 
   let server!: Awaited<ReturnType<typeof createApplicationServer>>, sessions!: WalletSessions, origin = "";
   for (let attempt = 0; attempt < 3; attempt++) {
     origin = "https://localhost:" + await freePort(); sessions = new WalletSessions({ origin, domain: new URL(origin).host, cluster: "devnet" }, () => now);
-    server = await createApplicationServer(tls, { assetsDirectory, sessions, store: ledger.s,
+    server = await createApplicationServer(tls, { assetsDirectory, sessions, store: ledger.s, ...(walletReview ? {walletReview} : {}),
       service: { verify: async () => { legacyCalls++; return { legacy: true } as any; } }, ...(mode === "disabled" ? {} : { chain }) });
     try { await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(Number(new URL(origin).port), "127.0.0.1", () => { server.off("error", reject); resolve(); }); }); break; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE" || attempt === 2) { ledger.s.close(); throw error; } }
@@ -220,4 +221,23 @@ test("workflow missing manifests, malformed inputs and oversized bodies fail clo
   const out=await f.send(path,{...input,terms});assert.equal(out.status,400);assert.equal(out.body.data,null);
  }
  assert.equal((await f.send(path,{...input,terms:{...input.terms,note:"x".repeat(9000)}})).status,413);
+});
+
+test("wallet review routes retain auth and opt-in controls; broadcast is unconditionally disabled",async t=>{
+ const f=await fixture(t),workflow=workflowInput(f),input={...envelope,operation:"create_internship",workflow};
+ assert.equal((await f.send("/api/v1/workflow/review",input)).status,401);await f.login();
+ assert.equal((await f.send("/api/v1/workflow/review",input,{noOrigin:true})).status,400);
+ const missing=await f.send("/api/v1/workflow/review",input);assert.equal(missing.status,503);assert.equal(missing.body.error.code,"wallet_review_unavailable");
+ const denied=await f.send("/api/v1/workflow/broadcast",{});assert.equal(denied.status,403);assert.equal(denied.body.error.code,"live_execution_disabled");assert.deepEqual(f.calls,[]);assert.equal(f.legacyCalls(),0);
+});
+
+test("configured actual HTTPS review reports absent program without signing or sending",async t=>{
+ const calls:string[]=[];const mint=Buffer.from("AQAAAA+qVvG1VD9pMoZjkpfLerqq4E8r7ix1Ehs+fVxmT33KAAAAAAAAAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==","base64");
+ const reviewer=new WalletExecutionReviewer(new ReadOnlyWalletRpc(async(_url,init)=>{const r=JSON.parse(String(init?.body));calls.push(r.method);
+  assert(["getGenesisHash","getMultipleAccounts"].includes(r.method));return Response.json({jsonrpc:"2.0",id:r.id,result:r.method==="getGenesisHash"?SETTLEMENT_DEVNET_GENESIS:
+   {context:{slot:200},value:[null,{owner:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",executable:false,data:[mint.toString("base64"),"base64"]}]}});
+ }),async()=>undefined);
+ const f=await fixture(t,"fixture",reviewer);await f.login();const r=await f.send("/api/v1/workflow/review",{...envelope,operation:"create_internship",workflow:workflowInput(f)});
+ assert.equal(r.status,200);assert.equal(r.body.data.state,"blocked");assert.deepEqual(r.body.data.blockers,["missing_program"]);assert.equal(r.body.data.deployment.mint.decimals,6);
+ assert.equal(r.body.data.liveExecution,false);assert.equal(r.body.data.messageBase64,null);assert.deepEqual(calls,["getGenesisHash","getMultipleAccounts"]);
 });

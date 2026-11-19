@@ -12,7 +12,7 @@
     "build": "npm run check && node scripts/build.mjs",
     "preview": "node scripts/build.mjs --preview",
     "test": "npm run build && playwright test",
-    "test:unit": "node --test test/contracts.test.mjs"
+    "test:unit": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

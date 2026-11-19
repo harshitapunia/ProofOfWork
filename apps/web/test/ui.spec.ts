@@ -35,6 +35,9 @@ async function browserFixture(page: Page, settings: Settings & { hold?: string[]
       const method = req.method();
       calls.push({ path, method, body: req.postDataJSON(), cookie: (await req.allHeaders()).cookie });
       // UI-only response fixture. Actual authorization/builders/hashes are exercised by real HTTPS/backend tests.
+      if (path === "/api/v1/workflow/review") return route.fulfill({json:reply({kind:"wallet_execution_review",state:"blocked",liveExecution:false,
+        operation:req.postDataJSON().operation,wallet:WALLET,reviewId:null,messageBase64:null,messageBase58:null,lastValidBlockHeight:null,blockhash:null,observedSlot:200,expiresAt:null,feeLamports:null,rentLamports:null,
+        deployment:{programExists:false,executable:false,artifactEquality:"not_established",mint:{exists:true,decimals:6,supplyRaw:"0"}},blockers:["missing_program"],rewardPayment:"not_established",provenance:"unverified_devnet_rpc"},"unverified_devnet_rpc")});
       if (path === "/api/v1/workflow/prepare") {
         if (method !== "POST") return route.fulfill({status:405,json:reply(null,"none","method_not_allowed")});
         if (settings.workflowError) return route.fulfill({status:settings.workflowError,json:reply(null,"none",settings.workflowError===401?"authentication_required":"application_unavailable")});
@@ -299,4 +302,15 @@ test("expired authentication rejects workflow preparation and clears private for
  for(const [name,value] of Object.entries({contributorId:"1",commit:"cd".repeat(20),nonce:"ef".repeat(32),pullRequest:"1"}))await page.locator(`[name="${name}"]`).fill(value);
  await page.getByRole("button",{name:"Validate evidence & prepare submission"}).click();
  await expect(page.getByRole("heading",{name:"Sign in to read your records."})).toBeVisible();await expect(page.locator('[name="nonce"]')).toHaveCount(0);
+});
+
+test("fresh Devnet review exposes missing deployment and cannot invoke wallet or broadcast",async({page})=>{
+ await organizationForm(page);await page.getByRole("button",{name:"Prepare organization instructions"}).click();
+ const signedBefore=await page.evaluate(()=>(window as any).signedMessages.length);
+ await page.getByRole("button",{name:"create internship — review",exact:true}).click();
+ await expect(page.getByRole("heading",{name:"Execution blocked"})).toBeVisible();await expect(page.getByText("missing program",{exact:true})).toBeVisible();
+ await expect(page.getByRole("button",{name:"Approve transaction in wallet — disabled"})).toBeDisabled();await expect(page.getByRole("button",{name:"Broadcast signed transaction — disabled"})).toBeDisabled();
+ expect(await page.evaluate(()=>(window as any).signedMessages.length)).toBe(signedBefore);
+ await expect(page.getByText("Program exists: false.",{exact:false})).toBeVisible();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

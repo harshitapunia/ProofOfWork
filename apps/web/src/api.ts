@@ -27,7 +27,15 @@ export async function request<T>(path: string, kind: string, body?: object, sign
     throw new ApiError("invalid_api_response");
   const d = value.data;
   const strings = (...keys: string[]) => keys.every(k => typeof d[k] === "string");
-  const valid = kind === "workflow_preparation" ? d.stage === "unsigned_instruction_plan" && ["organization", "submission"].includes(d.action)
+  const valid = kind === "wallet_execution_revalidation" ? d.liveExecution === false && d.state === "ready_for_review"
+    : kind === "wallet_execution_signature" ? d.liveExecution === false && strings("signature")
+    : kind === "wallet_execution_confirmation" ? ["confirmed","failed","unknown"].includes(d.state) && strings("signature") && d.rewardPayment === "not_established" && d.retryAuthorized === false && (d.explorerUrl === null || typeof d.explorerUrl === "string")
+    : kind === "wallet_execution_review" ? ["blocked","ready_for_review"].includes(d.state) && d.liveExecution === false
+    && strings("operation","wallet") && Array.isArray(d.blockers) && d.blockers.every((v:unknown)=>typeof v==="string") && d.rewardPayment === "not_established"
+    && (d.deployment === null || (typeof d.deployment === "object" && typeof d.deployment.programExists === "boolean" && typeof d.deployment.executable === "boolean"
+      && typeof d.deployment.artifactEquality === "string" && d.deployment.mint && typeof d.deployment.mint.exists === "boolean"))
+    && (d.messageBase64 === null || typeof d.messageBase64 === "string")
+    : kind === "workflow_preparation" ? d.stage === "unsigned_instruction_plan" && ["organization", "submission"].includes(d.action)
     && strings("internship", "milestone", "requirementsHash") && Array.isArray(d.steps) && d.steps.length > 0 && d.steps.length <= 4
     && d.terms && typeof d.terms === "object" && d.accountState === "not_observed" && d.idsReserved === false
     && d.signed === false && d.broadcast === false && d.verification === "not_run" && d.proposalAuthority === "not_proven" && d.rewardPayment === "not_established"
