@@ -156,7 +156,7 @@ export class WalletExecutionReviewer {
   async revalidate(id:string,wallet:string):Promise<void>{
     const c=this.context(id,wallet);check(this.now()-c.created>=0 && this.now()-c.created<20000,"review_expired");const signal=AbortSignal.timeout(10000);
     const observation=await observeDeployment(this.rpc,await this.artifact(),signal);check(observation.blockers.length===0,"deployment_changed");
-    const before=await this.snapshot(c.plan,c.view.operation,wallet,c.view.observedSlot!,false,signal);
+    const before=await this.snapshot(c.plan,c.view.operation,wallet,Math.max(c.view.observedSlot!,observation.slot),false,signal);
     const size=c.view.operation==="create_internship"?49:c.view.operation==="create_milestone"?276:c.view.operation==="fund_milestone"?165:c.view.operation==="submit_milestone"?113:0;
     const rent=size?integer(await this.rpc.call("getMinimumBalanceForRentExemption",[size,{commitment:"confirmed"}],signal)):0;
     check(rent===c.view.rentLamports,"rent_changed");check(BigInt(before.balance)>=BigInt(c.view.feeLamports!)+BigInt(rent),"insufficient_lamports");

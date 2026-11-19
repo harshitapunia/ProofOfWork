@@ -120,3 +120,18 @@ test("revalidation refreshes payer balance and rent before any wallet approval",
  await assert.rejects(f.reviewer.revalidate(r.reviewId!,r.wallet),{code:"insufficient_lamports"});f.accounts.get(r.wallet).lamports=100000000;
  f.responses.getMinimumBalanceForRentExemption=1000001;await assert.rejects(f.reviewer.revalidate(r.reviewId!,r.wallet),{code:"rent_changed"});
 });
+
+test("revalidation cannot use workflow accounts older than its fresh deployment observation",async t=>{
+ const f=fixture(t),r=await f.reviewer.review(f.input,f.wallet.publicKey.toBase58());assert.equal(r.state,"ready_for_review");
+ const original=f.rpc.call.bind(f.rpc);let minimum:number|null=null;
+ f.rpc.call=async(method:string,params:unknown[]=[],signal?:AbortSignal)=>{
+  const value=await original(method,params,signal);
+  if(method==="getMultipleAccounts"){
+   const [addresses,config]=params as [string[],{minContextSlot:number}];
+   if(addresses[0]===PROGRAM_ID)value.context.slot=250;
+   else minimum=config.minContextSlot; // workflow response deliberately remains at slot 200
+  }
+  return value;
+ };
+ await assert.rejects(f.reviewer.revalidate(r.reviewId!,r.wallet),{code:"invalid_rpc_response"});assert.equal(minimum,250);
+});
