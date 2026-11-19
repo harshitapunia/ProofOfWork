@@ -109,7 +109,7 @@ test("TLS trust is required rather than disabled by the test client", async t =>
   assert.equal((await f.send("/")).status, 200);
 });
 test("real Ed25519 proof over exact server bytes establishes secure-cookie session and all authorized reads", async t => {
-  const f = await fixture(t), before = f.base.snapshot(); const login = await f.login();
+  const f = await fixture(t), before = f.base.snapshot(), walletJobBefore = f.s.jobs.getJob(f.job.jobId); const login = await f.login();
   assert.equal(login.verified.body.data.wallet, f.sponsor.wallet); assert.equal(login.verified.body.data.origin, f.origin);
   assert(!JSON.stringify(login.verified.body).includes(f.cookies.get("__Host-proofwork_session")!));
   for (const suffix of ["", "/milestone", "/execution"]) {
@@ -118,7 +118,7 @@ test("real Ed25519 proof over exact server bytes establishes secure-cookie sessi
     assert.equal(r.body.permissions.signingAuthorization, "not_granted"); assert.equal(r.body.permissions.submissionAuthorized, false);
     if (suffix) assert.equal(r.body.data.rewardPayment, "not_established");
   }
-  assert.deepEqual(f.base.snapshot(), before); assert.equal((await f.send("/api/v1/auth/verify", login.proof)).status, 401);
+  assert.deepEqual(f.base.snapshot(), before); assert.deepEqual(f.s.jobs.getJob(f.job.jobId), walletJobBefore); assert.equal((await f.send("/api/v1/auth/verify", login.proof)).status, 401);
 });
 test("recorded student can authenticate and read the actual stored job", async t => {
   const f = await fixture(t); await f.login(f.student); assert.equal((await f.send("/api/v1/jobs/" + f.job.jobId)).status, 200);
