@@ -35,6 +35,11 @@ function run(command, args, cwd = root) {
 }
 run("npm", ["ci", "--ignore-scripts"], path.join(root, "packages/finance-client"));
 run("npm", ["run", "build"], path.join(root, "packages/finance-client"));
+// The complete journey reuses the real workflow/verifier/authorizer modules with offline adapters.
+for (const directory of ["services/lifecycle", "services/verifier"]) {
+  run("npm", ["ci", "--ignore-scripts"], path.join(root, directory));
+  run("npm", ["run", "build"], path.join(root, directory));
+}
 const evidenceRoot = path.join(root, "target/client-bridge");
 mkdirSync(evidenceRoot, { recursive: true });
 const evidence = mkdtempSync(path.join(evidenceRoot, "run-"));
@@ -46,6 +51,12 @@ const inputs = [
   "packages/finance-client/package.json",
   "packages/finance-client/package-lock.json",
   "tests/runtime/Cargo.toml", "tests/runtime/Cargo.lock",
+  "tests/runtime/client/journey.mjs",
+  ...["workflow-preparation", "service", "github", "chain", "attestation-chain", "attestation", "commitments", "manifest", "http", "errors", "runner", "sum-v2"].flatMap(name => [
+    `services/verifier/src/${name}.ts`, `services/verifier/dist/src/${name}.js`,
+  ]),
+  "services/verifier/test/helpers.ts", "services/verifier/dist/test/helpers.js",
+  "services/verifier/package.json", "services/verifier/package-lock.json",
   "tests/runtime/client/worker.mjs", "tests/runtime/tests/client_bridge.rs",
   "tests/runtime/tests/support/mod.rs", "tests/runtime/tests/support/finance.rs",
   "tests/runtime/tests/atomicity_sbf.rs", "tests/runtime/tests/refund_sbf.rs",

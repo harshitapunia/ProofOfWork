@@ -1335,3 +1335,214 @@ fn lifecycle_all_builders_require_valid_cryptographic_signatures() {
         }
     }
 }
+
+// Complete offline vertical slice: real workflow preparation -> real client wire ->
+// SBF state -> real verifier/authorizer -> signed attestation -> exact settlement.
+// Fixture::new provisions local mint/ATAs and an unrelated internship 7. The journey
+// uses absent internship 8; none of its program state is injected. All journey
+// transactions enable signature checks. GitHub HTTP and runner outcomes are doubles.
+fn journey_call(w: &mut Worker, f: &Fixture, action: &str, failure: Option<&str>) -> Value {
+    let mut accounts = serde_json::Map::new();
+    for (key, a) in f.svm.get_program_accounts(&PROGRAM_ID) {
+        accounts.insert(
+            key.to_string(),
+            json!({"owner":a.owner.to_string(),"executable":a.executable,"dataHex":hex(&a.data)}),
+        );
+    }
+    w.call(json!({"op":"journey","action":action,"failure":failure,"accounts":accounts,"blockhash":f.svm.latest_blockhash().to_string()}))
+}
+fn journey_submitted() -> (Worker, Fixture, Scope, Value) {
+    let mut w = Worker::new();
+    let mut f = Fixture::new();
+    signed(&mut f);
+    let plan = w.call(json!({"op":"journey-plan"}));
+    assert_eq!(plan["ok"], true);
+    f.internship = plan["organization"]["internship"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let s = f.scope(1);
+    assert_eq!(s.milestone.to_string(), plan["submission"]["milestone"]);
+    assert!(f.svm.get_account(&f.internship).is_none());
+    assert!(f.svm.get_account(&s.milestone).is_none());
+    for (action, status) in [
+        ("create_internship", None),
+        ("create_milestone", Some(0)),
+        ("fund_milestone", Some(FUNDED)),
+        ("assign_student", Some(ASSIGNED)),
+        ("submit_milestone", Some(3)),
+    ] {
+        let v = journey_call(&mut w, &f, action, None);
+        assert_eq!(
+            v["requiredSigners"],
+            json!([if action == "submit_milestone" {
+                f.student.to_string()
+            } else {
+                f.sponsor.to_string()
+            }])
+        );
+        send(&mut f, &v, &format!("journey-{action}"));
+        if let Some(expected) = status {
+            let m = f.program_account(s.milestone, 276, MILESTONE_DISC);
+            assert_eq!(m.data[272], expected);
+            assert_eq!(
+                &m.data[200..232],
+                unhex(plan["organization"]["requirementsHash"].as_str().unwrap())
+            );
+            assert_eq!(
+                u64::from_le_bytes(m.data[240..248].try_into().unwrap()),
+                REWARD
+            );
+            if expected >= FUNDED {
+                assert_eq!(f.token_amount(s.vault), REWARD);
+                assert_eq!(f.token_amount(f.sponsor_ata), INITIAL_SUPPLY - REWARD);
+                assert_eq!(f.token_amount(f.student_ata), 0);
+            }
+        }
+        f.assert_conserved();
+    }
+    let submission = f.program_account(s.submission, 113, SUBMISSION_DISC);
+    assert_eq!(
+        &submission.data[72..104],
+        unhex(plan["submission"]["evidenceHash"].as_str().unwrap())
+    );
+    assert_eq!(&submission.data[8..40], s.milestone.as_ref());
+    assert_eq!(&submission.data[40..72], f.student.as_ref());
+    (w, f, s, plan)
+}
+fn journey_settles(surplus: bool) {
+    let (mut w, mut f, s, plan) = journey_submitted();
+    // Replay the exact signed submission: history rejection leaves all accounts unchanged.
+    let duplicate = journey_call(&mut w, &f, "submit_milestone", None);
+    let before = f.snapshot(&[s.milestone, s.submission, s.vault, f.student_ata]);
+    assert!(f.svm.send_transaction(decode(&duplicate)).is_err());
+    f.assert_unchanged(&before);
+    let attestation = journey_call(&mut w, &f, "attest", None);
+    assert_eq!(
+        attestation["requiredSigners"],
+        json!([f.verifier.to_string()])
+    );
+    send(&mut f, &attestation, "journey-attest");
+    let verified = f.program_account(s.milestone, 276, MILESTONE_DISC);
+    assert_eq!(verified.data[272], VERIFIED);
+    assert!(i64::from_le_bytes(verified.data[264..272].try_into().unwrap()) >= NOW);
+    if surplus {
+        let mut data = vec![12];
+        data.extend_from_slice(&SURPLUS.to_le_bytes());
+        data.push(DECIMALS);
+        let donation = Instruction {
+            program_id: TOKEN,
+            accounts: vec![
+                AccountMeta::new(f.sponsor_ata, false),
+                AccountMeta::new_readonly(MINT, false),
+                AccountMeta::new(s.vault, false),
+                AccountMeta::new_readonly(f.sponsor, true),
+            ],
+            data,
+        };
+        let sponsor = f.sponsor;
+        fixture_send(&mut w, &mut f, &[donation], sponsor, "journey-surplus");
+    }
+    let sponsor_tokens = f.token_amount(f.sponsor_ata);
+    let sponsor_rent = f.account(f.sponsor).lamports;
+    let vault_rent = f.account(s.vault).lamports;
+    let settlement = journey_call(&mut w, &f, "settle", None);
+    assert_eq!(settlement["requiredSigners"], json!([f.caller.to_string()]));
+    let meta = send(&mut f, &settlement, "journey-settle");
+    assert_token_cpis(&meta, if surplus { 2 } else { 1 }, 1);
+    assert_eq!(f.token_amount(f.student_ata), REWARD);
+    assert_eq!(
+        f.token_amount(f.sponsor_ata),
+        sponsor_tokens + if surplus { SURPLUS } else { 0 }
+    );
+    assert_eq!(f.account(f.sponsor).lamports, sponsor_rent + vault_rent);
+    assert!(f.svm.get_account(&s.vault).is_none());
+    assert_eq!(f.account(s.milestone).data[272], SETTLED);
+    let completion = f.program_account(s.completion, 249, COMPLETION_DISC);
+    for (offset, key) in [
+        (8, s.milestone),
+        (40, f.student),
+        (72, f.sponsor),
+        (104, f.verifier),
+        (136, s.submission),
+    ] {
+        assert_eq!(&completion.data[offset..offset + 32], key.as_ref());
+    }
+    assert_eq!(
+        &completion.data[168..200],
+        unhex(plan["organization"]["requirementsHash"].as_str().unwrap())
+    );
+    assert_eq!(
+        &completion.data[200..232],
+        unhex(plan["submission"]["evidenceHash"].as_str().unwrap())
+    );
+    assert_eq!(&completion.data[232..240], &verified.data[264..272]);
+    assert_eq!(
+        i64::from_le_bytes(completion.data[240..248].try_into().unwrap()),
+        NOW
+    );
+    assert_eq!(completion.data[248], s.completion_bump);
+    let terminal = f.snapshot(&[
+        s.milestone,
+        s.submission,
+        s.completion,
+        f.student_ata,
+        f.sponsor_ata,
+    ]);
+    assert!(f.svm.send_transaction(decode(&settlement)).is_err());
+    f.assert_unchanged(&terminal);
+    f.assert_conserved();
+    record(
+        if surplus {
+            "journey-positive-surplus"
+        } else {
+            "journey-zero-surplus"
+        },
+        json!({"result":"passed","offlineOnly":true,"sigverify":true,"program":PROGRAM_ID.to_string(),"milestone":s.milestone.to_string(),"studentRewardRaw":REWARD,"surplusRaw":if surplus {SURPLUS}else{0},"completion":s.completion.to_string(),"vaultClosed":true,"verificationDependencies":"GitHub HTTP and runner outcome doubles"}),
+    );
+}
+#[test]
+fn full_workflow_verifier_and_signed_sbf_zero_surplus() {
+    journey_settles(false);
+}
+#[test]
+fn full_workflow_verifier_and_signed_sbf_positive_surplus() {
+    journey_settles(true);
+}
+#[test]
+fn full_workflow_verification_failures_never_attest_or_pay() {
+    let (mut w, mut f, s, _) = journey_submitted();
+    let before = f.snapshot(&[
+        s.milestone,
+        s.submission,
+        s.vault,
+        f.student_ata,
+        f.sponsor_ata,
+    ]);
+    for failure in ["runner", "github", "evidence"] {
+        let denied = journey_call(&mut w, &f, "attest", Some(failure));
+        assert_eq!(denied["ok"], false, "{failure}: {denied}");
+        assert_eq!(
+            denied["error"],
+            if failure == "evidence" {
+                "evidence_mismatch"
+            } else {
+                "verification_failed"
+            }
+        );
+        assert!(denied.get("wireHex").is_none());
+        f.assert_unchanged(&before);
+        assert!(f.svm.get_account(&s.completion).is_none());
+    }
+    // A permissionless caller cannot turn Submitted into a payout without attestation.
+    let settle = journey_call(&mut w, &f, "settle", None);
+    let err = f
+        .svm
+        .send_transaction(decode(&settle))
+        .expect_err("unverified payment denied");
+    assert!(err.meta.compute_units_consumed > 0);
+    f.assert_unchanged(&before);
+    assert_eq!(f.token_amount(f.student_ata), 0);
+    assert!(f.svm.get_account(&s.completion).is_none());
+}

@@ -16,8 +16,11 @@ for await(const line of readline.createInterface({input:process.stdin})){
  try{
   const q=JSON.parse(line);
   if(q.op==="init"){console.log(JSON.stringify({ok:true,pub}));continue;}
+  if(q.op==="journey-plan"){const j=await import("./journey.mjs");console.log(JSON.stringify(j.plan(pub)));continue;}
   let tx,selection=null,expectedSigner=pub.caller;
-  if(q.op==="prepare"){
+  if(q.op==="journey"){
+   const j=await import("./journey.mjs"),built=await j.instruction(q,pub);tx=built.transaction;expectedSigner=built.signer;
+  }else if(q.op==="prepare"){
    const rpc={rpcEndpoint:client.SETTLEMENT_DEVNET_RPC,
     async getGenesisHash(){return client.SETTLEMENT_DEVNET_GENESIS;},
     async getMultipleAccountsInfo(addresses){return addresses.map(k=>{

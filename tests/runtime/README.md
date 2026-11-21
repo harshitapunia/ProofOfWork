@@ -37,7 +37,7 @@ explicit pin change; never disable the guard.
 
 23 core tests cover settlement, refunds, lifecycle, local signed history and
 failed transfer/closure/completion atomicity. Financial core fixtures use
-placeholder signatures. The 46 bridge tests use real TypeScript-generated
+placeholder signatures. The 49 bridge tests use real TypeScript-generated
 wire bytes and signed settlement/attack transactions; two cases are client
 preflight rejection only. Lifecycle setup uses placeholder signatures.
 Synthetic overflow/shortfall/completion prestates are labelled in source;
@@ -83,8 +83,8 @@ bridge settlement/attack signatures are real local Ed25519 checks. Operational
 verifier signing, RPC transport, wallet adapters, transaction confirmation and
 backend/frontend orchestration remain outside this harness.
 
-The unchanged finance-client runtime dependency tree has known npm advisories.
-Review npm audit output separately; do not run automatic major-version upgrades
+The finance-client dependency tree is checked by the strict Node security gate.
+Review current npm audit output separately; do not run automatic major-version upgrades
 inside this runtime-only PR. No copied client source, binary or test output
 belongs in the commit.
 
@@ -99,11 +99,44 @@ run results must be checked; local historical results are not GitHub CI evidence
 
 ## Lifecycle client extension
 
-The 46 bridge cases include the original 26 settlement/attack cases and 20 new
+The 49 bridge cases include the original 26 settlement/attack cases and 20 new
 assignment/submission/refund cases. They call the actual finance-client builders,
 then sign exact bytes with disposable in-memory identities. Creation/funding and
 optional assignment setup are labeled trusted fixtures; targeted lifecycle
 operations are never reconstructed as Rust instructions. Existing two preflight-
 only cases remain. Synthetic Token/lamport overflow tests are fault injection,
-not economically reachable supply claims. The CI guard requires all 46 bridge
+not economically reachable supply claims. The CI guard requires all 49 bridge
 tests in addition to the unchanged 23 core tests.
+
+
+## Complete offline workflow/verifier journey
+
+Three additional bridge tests connect real `prepareWorkflow` organization and
+student plans to signed SBF transactions for creation, milestone creation,
+funding, assignment and submission. The VM's actual account bytes feed the
+existing attestation reader, GitHub adapter, `VerifierService` and single-use
+`AttestationAuthorizer`. Only the instruction returned by that authorizer is
+signed by the independent disposable verifier. All journey transactions enable
+signature verification. Settlement uses the actual finance-client serializer.
+
+Both zero-surplus and positive-surplus paths assert every status, submission
+commitment, exact student reward, sponsor surplus, vault closure/rent return,
+completion provenance and replay rejection. Failed GitHub identity, runner
+outcomes and evidence commitments emit no attestation wire and cannot pay.
+The original 23 core and 46 bridge cases are retained; the CI guard now requires
+at least 72 total runtime cases, without failed/ignored/filtered cases.
+
+This is offline integration, not real GitHub acceptance execution or a browser
+wallet demonstration. GitHub HTTP responses and runner outcomes reuse explicit
+test doubles. Fixture setup provisions a local mint/ATAs and an unrelated
+internship 7; the journey creates absent internship 8 itself. No journey program
+state is injected. The runner builds the locked lifecycle/verifier dependencies
+before executing tests and hashes the consumed verifier source/compiled modules
+and fixture inputs into fresh provenance. Do not run package installs concurrently
+with other suites consuming those same node_modules directories.
+
+The browser suites separately exercise form/adapter behavior; actual HTTPS tests
+exercise real handlers and cryptographic login. These are complementary slices,
+not a single browser-to-LiteSVM or live Devnet proof. See the
+[controlled live rehearsal plan](../../docs/LIVE_DEVNET_REHEARSAL.md) for remaining
+operational gates. Signing and broadcasting remain disabled.
