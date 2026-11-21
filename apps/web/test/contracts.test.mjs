@@ -35,3 +35,12 @@ test('browser source has no transaction signing, sending, custody or token stora
   assert.match(source, /rewardPayment: "not_established"/);
   assert.match(source, /Fictional records\. No live Devnet data/);
 });
+
+test('wallet execution gate is explicit and browser has no automatic send or custody capability',()=>{
+ const files=['api.ts','App.tsx','Workflow.tsx','ExecutionReview.tsx','wallet-execution.ts','demo.ts','routes.ts'];
+ const source=files.map(f=>readFileSync('src/'+f,'utf8')).join('\n');
+ assert.doesNotMatch(source,/sendRawTransaction|localStorage|sessionStorage|privateKey|secretKey|seedPhrase/);
+ assert.match(readFileSync('src/wallet-execution.ts','utf8'),/LIVE_WALLET_EXECUTION = false/);
+ assert.match(readFileSync('src/wallet-execution.ts','utf8'),/if\(!LIVE_WALLET_EXECUTION\)throw new Error\("live_execution_disabled"\)/);
+ assert.match(readFileSync('../../services/verifier/src/devnet-wallet-review.ts','utf8'),/async broadcast\(\):Promise<never>\{throw new WalletAuthError\("live_execution_disabled",403\);\}/);
+});

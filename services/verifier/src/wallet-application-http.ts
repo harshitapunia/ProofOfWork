@@ -1,3 +1,4 @@
+import { WalletExecutionReviewer } from "./devnet-wallet-review.js";
 import { prepareWorkflow } from "./workflow-preparation.js";
 /** Explicit composition only. The existing CLI/default server never constructs this service. */
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -8,8 +9,8 @@ import { WalletSessions, WalletAuthError, sessionCookie, readSessionCookie, chal
 const PREFIX = "/api/v1/";
 export class WalletApplicationHttp {
   #active = 0;
-  readonly #services: Readonly<{ store: LifecycleStore; timeoutMs: number; chain?: ApplicationChainSource }> | undefined;
-  constructor(readonly sessions: WalletSessions, services?: { store: LifecycleStore; timeoutMs: number; chain?: ApplicationChainSource }) {
+  readonly #services: Readonly<{ store: LifecycleStore; timeoutMs: number; chain?: ApplicationChainSource; walletReview?: WalletExecutionReviewer }> | undefined;
+  constructor(readonly sessions: WalletSessions, services?: { store: LifecycleStore; timeoutMs: number; chain?: ApplicationChainSource; walletReview?: WalletExecutionReviewer }) {
     if (!(sessions instanceof WalletSessions)) throw new WalletAuthError("invalid_auth_configuration", 503);
     if (services) {
       // Reuse query configuration validation, but do not install an authentication bypass.
@@ -47,7 +48,8 @@ export class WalletApplicationHttp {
       return true;
     }
     const match = /^\/api\/v1\/jobs\/([^/?]+)(?:\/(milestone|execution))?$/.exec(path);
-    const preparation = path === PREFIX + "workflow/prepare";
+    const walletAction = ["review", "revalidate", "validate", "confirm", "broadcast"].find(action => path === PREFIX + "workflow/" + action);
+    const preparation = path === PREFIX + "workflow/prepare" || walletAction !== undefined;
     const auth = [PREFIX + "auth/challenge", PREFIX + "auth/verify", PREFIX + "auth/logout"].includes(path);
     if (!auth && !match && !preparation) return false;
     let resource: ApplicationResource | "authentication" | "unknown" = auth ? "authentication" : "unknown", id: string | null = null;
@@ -69,10 +71,26 @@ export class WalletApplicationHttp {
       if (preparation) {
         const session = this.sessions.resolve(token);
         if (!session) throw new WalletAuthError("authentication_required", 401);
+        if (walletAction === "broadcast") throw new WalletAuthError("live_execution_disabled", 403);
         const input = await this.body(request);
         // Recheck after potentially slow body delivery; a revoked/expired cookie cannot prepare a plan.
         if (this.sessions.resolve(token)?.sessionId !== session.sessionId) throw new WalletAuthError("authentication_required", 401);
-        this.reply(response, applicationReply(applicationRequestId(), "unknown", null, 200,
+        if (walletAction) {
+          const reviewer = this.#services?.walletReview;
+          if (!reviewer) throw new WalletAuthError("wallet_review_unavailable", 503);
+          const value = input as any;
+          const keys = walletAction === "review" ? ["apiVersion","cluster","operation","workflow"]
+            : ["confirm","validate"].includes(walletAction) ? ["apiVersion","cluster","reviewId","wireBase64"] : ["apiVersion","cluster","reviewId"];
+          if (!value || typeof value !== "object" || Array.isArray(value) || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(keys.sort())
+            || value.apiVersion !== APPLICATION_API_VERSION || value.cluster !== "devnet") throw new WalletAuthError("invalid_request",400);
+          if (walletAction !== "review" && (typeof value.reviewId !== "string" || !/^[a-f0-9-]{36}$/.test(value.reviewId))) throw new WalletAuthError("invalid_request",400);
+          const data = walletAction === "review" ? await reviewer.review({operation:value.operation,workflow:value.workflow},session.wallet)
+            : walletAction === "validate" ? {kind:"wallet_execution_signature" as const,signature:reviewer.validateSigned(value.reviewId,session.wallet,value.wireBase64).signature,liveExecution:false as const}
+            : walletAction === "confirm" ? await reviewer.confirm(value.reviewId,session.wallet,value.wireBase64)
+            : (await reviewer.revalidate(value.reviewId,session.wallet), {kind:"wallet_execution_revalidation" as const,liveExecution:false as const,state:"ready_for_review" as const});
+          if (this.sessions.resolve(token)?.sessionId !== session.sessionId) throw new WalletAuthError("authentication_required",401);
+          this.reply(response,applicationReply(applicationRequestId(),"unknown",null,200,data,"unverified_devnet_rpc"));
+        } else this.reply(response, applicationReply(applicationRequestId(), "unknown", null, 200,
           prepareWorkflow(input, session.wallet), "unsigned_finance_client"));
       } else if (auth) {
         if (path.endsWith("/logout")) {

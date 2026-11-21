@@ -1,0 +1,49 @@
+/** Wallet approval state flow. Production is hard-disabled; offline doubles grant no live permission. */
+export const LIVE_WALLET_EXECUTION = false;
+export type WalletStage = "prepared" | "ready_for_review" | "awaiting_wallet_approval" | "signed_awaiting_broadcast" | "submitted" | "confirming" | "confirmed" | "failed" | "unknown";
+export interface ReviewedMessage { wallet:string; reviewId:string; messageBase58:string; expiresAt:string }
+export interface WalletPorts {
+  readonly mode:"disabled"|"offline-test-only";
+  wallet():string|null;
+  revalidate():Promise<void>;
+  sign():Promise<Uint8Array>;
+  validate(wire:Uint8Array):Promise<string>;
+  broadcast(wire:Uint8Array):Promise<string>;
+  confirm(wire:Uint8Array,signature:string):Promise<"confirmed"|"failed"|"unknown">;
+}
+export class WalletApprovalFlow {
+  stage:WalletStage="ready_for_review"; signature:string|null=null;
+  #wire:Uint8Array|null=null;
+  #broadcastStarted=false;
+  private readonly review:ReviewedMessage;
+  private readonly ports:WalletPorts;
+  private readonly now:()=>number;
+  constructor(review:ReviewedMessage,ports:WalletPorts,now=()=>Date.now()){this.review=review;this.ports=ports;this.now=now;}
+  private fresh(){if(this.ports.mode!=="offline-test-only")throw new Error("live_execution_disabled");
+    if(this.ports.wallet()!==this.review.wallet)throw new Error("wallet_changed");
+    if(!Number.isFinite(Date.parse(this.review.expiresAt)) || this.now()>=Date.parse(this.review.expiresAt))throw new Error("review_expired");}
+  /** Separate explicit action. A failed/rejected attempt is consumed; obtain fresh review manually. */
+  async approve(){if(this.stage!=="ready_for_review")throw new Error("attempt_consumed");this.stage="awaiting_wallet_approval";
+    try{this.fresh();await this.ports.revalidate();this.fresh();const wire=await this.ports.sign();this.fresh();
+      if(!(wire instanceof Uint8Array)||wire.length>1232)throw new Error("invalid_wire");const copy=Uint8Array.from(wire);
+      this.signature=await this.ports.validate(Uint8Array.from(copy));this.#wire=copy;this.stage="signed_awaiting_broadcast";
+    }catch{this.#wire=null;this.signature=null;this.stage="failed";}}
+  /** Separate explicit action; all uncertain sends are terminal unknown, with no automatic retry. */
+  async broadcast(){if(this.stage!=="signed_awaiting_broadcast"||!this.#wire||!this.signature||this.#broadcastStarted)throw new Error("not_signed");
+    this.#broadcastStarted=true;
+    try{this.fresh();await this.ports.revalidate();this.fresh();if(await this.ports.validate(Uint8Array.from(this.#wire))!==this.signature)throw new Error("wire_changed");}
+    catch{this.stage="failed";this.#wire=null;return;}
+    this.stage="submitted";
+    try{const signature=await this.ports.broadcast(Uint8Array.from(this.#wire));if(signature!==this.signature)throw new Error("signature_mismatch");
+      this.stage="confirming";this.stage=await this.ports.confirm(Uint8Array.from(this.#wire),signature);
+    }catch{this.stage="unknown";}finally{this.#wire=null;}}
+}
+/** Real traditional Phantom adapter, intentionally unreachable until a separately reviewed code change. */
+export async function requestPhantomTransaction(wallet:{publicKey:{toBase58():string}|null;request?:(r:object)=>Promise<unknown>},review:ReviewedMessage):Promise<Uint8Array>{
+  if(!LIVE_WALLET_EXECUTION)throw new Error("live_execution_disabled");
+  if(wallet.publicKey?.toBase58()!==review.wallet || typeof wallet.request!=="function")throw new Error("wallet_unavailable");
+  // Phantom's documented sign-only request; never signAndSendTransaction or signMessage transaction fallbacks.
+  const signed=await wallet.request({method:"signTransaction",params:{message:review.messageBase58}}) as {serialize?:()=>Uint8Array};
+  if(wallet.publicKey?.toBase58()!==review.wallet || typeof signed?.serialize!=="function")throw new Error("wallet_changed");
+  const wire=signed.serialize();if(!(wire instanceof Uint8Array)||wire.length>1232)throw new Error("invalid_wire");return Uint8Array.from(wire);
+}

@@ -1,3 +1,4 @@
+import { ExecutionReview } from "./ExecutionReview";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ENVELOPE, ApiError, message, request, type Session } from "./api";
 import { WORKFLOW_PATH } from "./routes";
@@ -30,9 +31,10 @@ function seconds(value: string): string {
 }
 export function Workflow({ session, role, onExpired }: { session: Session; role: "student" | "organization"; onExpired: () => void }) {
   const [result, setResult] = useState<Preparation | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const [submittedWorkflow,setSubmittedWorkflow] = useState<object|null>(null);
   const [proposal, setProposal] = useState("");
   const current = useRef(0), pending = useRef<AbortController | null>(null);
-  const clear = () => { current.current++; pending.current?.abort(); setResult(null); setError(""); setBusy(false); };
+  const clear = () => { current.current++; pending.current?.abort(); setResult(null); setSubmittedWorkflow(null); setError(""); setBusy(false); };
   useEffect(() => () => { current.current++; pending.current?.abort(); }, []);
   async function prepare(e: FormEvent<HTMLFormElement>) {
     e.preventDefault(); clear(); const revision = current.current, form = new FormData(e.currentTarget);
@@ -50,9 +52,9 @@ export function Workflow({ session, role, onExpired }: { session: Session; role:
         catch { throw new Error("Paste the organization preparation JSON. It is an untrusted proposal, not proof of assignment."); }
       }
       const evidence = role === "student" ? { contributorId: text("contributorId"), commit: text("commit"), nonce: text("nonce"), pullRequest: Number(text("pullRequest")) } : undefined;
-      const response = await request<Preparation>(WORKFLOW_PATH, "workflow_preparation", { ...ENVELOPE,
-        action: role === "organization" ? "organization" : "submission", terms, ...(evidence ? { evidence } : {}) }, AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)]));
-      if (current.current === revision) setResult(response.data);
+      const workflow = { ...ENVELOPE, action: role === "organization" ? "organization" : "submission", terms, ...(evidence ? { evidence } : {}) };
+      const response = await request<Preparation>(WORKFLOW_PATH, "workflow_preparation", workflow, AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)]));
+      if (current.current === revision) { setResult(response.data); setSubmittedWorkflow(workflow); }
     } catch (err) {
       if (current.current !== revision) return;
       if (err instanceof ApiError && err.status === 401) { onExpired(); return; }
@@ -97,6 +99,7 @@ export function Workflow({ session, role, onExpired }: { session: Session; role:
     </form>
     {error && <p role="alert" className="error">{error}</p>}
     {result && <div className="workflow-result" role="status">
+      {submittedWorkflow && <ExecutionReview workflow={submittedWorkflow} operations={result.steps.map(s=>s.action)} wallet={session.wallet} onExpired={onExpired}/>}
       <h3>Unsigned instruction plan prepared</h3><p>No on-chain action succeeded. Imported proposal authority and deployed program remain unverified.</p>
       <dl className="facts"><div><dt>Internship PDA</dt><dd>{result.internship}</dd></div><div><dt>Milestone PDA</dt><dd>{result.milestone}</dd></div><div><dt>Requirements commitment</dt><dd>{result.requirementsHash}</dd></div>{result.evidenceHash && <div><dt>Evidence commitment</dt><dd>{result.evidenceHash}</dd></div>}</dl>
       <ol>{result.steps.map(s => <li key={s.action}>{s.action.replaceAll("_", " ")} — required signer/payer: <span className="workflow-address">{s.feePayer}</span></li>)}</ol>
