@@ -1,3 +1,4 @@
+import {deriveStudentAta,deriveCompletion} from "@proofwork/finance-client";
 /** Synthetic public account fixtures and disposable RAM-only Ed25519 keys. No live RPC or send. */
 import {test,type TestContext} from "node:test";
 import assert from "node:assert/strict";
@@ -134,4 +135,61 @@ test("revalidation cannot use workflow accounts older than its fresh deployment 
   return value;
  };
  await assert.rejects(f.reviewer.revalidate(r.reviewId!,r.wallet),{code:"invalid_rpc_response"});assert.equal(minimum,250);
+});
+
+function settlementFixture(t:TestContext,surplus=0n,changedAuthority=false){
+ const f=fixture(t,"submit_milestone"),wallet=f.sponsor,scope={...envelope,sponsor:f.terms.sponsor,internshipId:f.terms.internshipId,milestoneId:f.terms.milestoneId};
+ f.m[272]=4;new PublicKey(f.b.submission).toBuffer().copy(f.m,168);f.m.writeBigInt64LE(BigInt(f.responses.getBlockTime-1),264);f.sub.writeBigInt64LE(BigInt(f.responses.getBlockTime-10),104);
+ f.accounts.set(f.b.internship,{...f.originalParent,lamports:1000000});f.accounts.set(f.b.milestone,f.wrap(PROGRAM_ID,f.m));f.accounts.set(f.b.submission,f.wrap(PROGRAM_ID,f.sub));
+ f.accounts.set(f.vault,f.token(deriveVaultAuthority(f.b.milestone)[0].toBase58(),10n+surplus));const studentAta=deriveStudentAta(f.terms.student).toBase58();f.accounts.set(studentAta,f.token(f.terms.student,100n));
+ if(changedAuthority)f.accounts.set(f.ata,f.token(f.terms.student,1000n));
+ return {...f,wallet,scope,studentAta,surplus,changedAuthority,input:{operation:"settle_milestone",workflow:scope}};
+}
+async function settledReceipt(f:ReturnType<typeof settlementFixture>){
+ const review=await f.reviewer.review(f.input,f.wallet.publicKey.toBase58());assert.equal(review.state,"ready_for_review",JSON.stringify(review.blockers));
+ await f.reviewer.revalidate(review.reviewId!,review.wallet);
+ const tx=Transaction.populate(Message.from(Buffer.from(review.messageBase64!,"base64")));tx.sign(f.wallet);const wire=tx.serialize().toString("base64"),keys=tx.compileMessage().accountKeys.map(k=>k.toBase58()),destination=tx.instructions.at(-1)!.keys[9]!.pubkey.toBase58(),completion=deriveCompletion(f.b.milestone)[0].toBase58();
+ const index=(a:string)=>keys.indexOf(a),tokenRow=(a:string,owner:string,amount:bigint)=>({accountIndex:index(a),mint:DEMO_MINT,owner,uiTokenAmount:{amount:amount.toString(),decimals:6}});
+ const pre=keys.map(k=>f.accounts.get(k)?.lamports??0),post=pre.slice(),vaultRent=pre[index(f.vault)]!;
+ post[index(f.vault)]=0;post[index(completion)]=1000000;if(f.changedAuthority)post[index(destination)]=1000000;
+ post[index(review.wallet)]=pre[index(review.wallet)]!+vaultRent-5000-Number(review.rentLamports);
+ const meta={err:null,fee:5000,preBalances:pre,postBalances:post,
+  preTokenBalances:[tokenRow(f.studentAta,f.terms.student,100n),tokenRow(f.vault,deriveVaultAuthority(f.b.milestone)[0].toBase58(),10n+f.surplus),...(f.changedAuthority?[]:[tokenRow(destination,f.terms.sponsor,1000n)])],
+  postTokenBalances:[tokenRow(f.studentAta,f.terms.student,110n),tokenRow(destination,f.terms.sponsor,(f.changedAuthority?0n:1000n)+f.surplus)]};
+ f.m[272]=5;f.accounts.set(f.b.milestone,f.wrap(PROGRAM_ID,f.m));f.accounts.set(f.vault,null);f.accounts.set(f.studentAta,f.token(f.terms.student,110n));f.accounts.set(destination,f.token(f.terms.sponsor,(f.changedAuthority?0n:1000n)+f.surplus));
+ const record=Buffer.alloc(249);createHash("sha256").update("account:CompletionRecord").digest().copy(record,0,0,8);
+ for(const [offset,value] of [[8,f.b.milestone],[40,f.terms.student],[72,f.terms.sponsor],[104,f.terms.verifier],[136,f.b.submission]] as const)new PublicKey(value).toBuffer().copy(record,offset);
+ f.m.copy(record,168,200,232);f.sub.copy(record,200,72,104);record.writeBigInt64LE(f.m.readBigInt64LE(264),232);record.writeBigInt64LE(BigInt(f.responses.getBlockTime),240);record[248]=deriveCompletion(f.b.milestone)[1];f.accounts.set(completion,f.wrap(PROGRAM_ID,record,false,1000000));
+ f.responses.getSignatureStatuses={context:{slot:200},value:[{slot:200,confirmationStatus:"confirmed",err:null}]};f.responses.getTransaction={slot:200,meta,transaction:[wire,"base64"]};
+ return {review,wire,meta,tx,destination,completion,confirm:()=>f.reviewer.confirm(review.reviewId!,review.wallet,wire)};
+}
+for(const surplus of [0n,7n])for(const changed of [false,true])test("exact settlement receipt: surplus="+surplus+", changed sponsor ATA authority="+changed,async t=>{
+ const f=settlementFixture(t,surplus,changed),x=await settledReceipt(f),v=await x.confirm();assert.equal(v.state,"confirmed");assert.equal(v.rewardPayment,"exact_reward_confirmed");assert.equal(v.settlement?.rewardAmountRaw,"10");assert.equal(v.settlement?.studentBeforeRaw,"100");assert.equal(v.settlement?.studentAfterRaw,"110");assert.equal(v.settlement?.sponsorSurplusRaw,surplus.toString());assert.equal(v.settlement?.completion,x.completion);
+ assert.equal((await f.reviewer.review(f.input,f.wallet.publicKey.toBase58())).state,"blocked");await assert.rejects(f.reviewer.broadcast(),{code:"live_execution_disabled"});assert(!f.calls.some(c=>c.startsWith("send")));
+});
+for(const fault of ["student_delta","surplus_delta","rent_destination","missing_metadata","wrong_wire","processed_only","missing_completion","fee_changed","rent_cap_exceeded"])test("settlement receipt refuses "+fault,async t=>{
+ const f=settlementFixture(t,7n),x=await settledReceipt(f);
+ if(fault==="student_delta")x.meta.postTokenBalances[0]!.uiTokenAmount.amount="111";
+ if(fault==="surplus_delta")x.meta.postTokenBalances[1]!.uiTokenAmount.amount="1008";
+ if(fault==="rent_destination")x.meta.postBalances[x.tx.compileMessage().accountKeys.findIndex(k=>k.toBase58()===f.terms.sponsor)]!--;
+ if(fault==="missing_metadata")delete (x.meta as any).preTokenBalances;
+ if(fault==="wrong_wire")f.responses.getTransaction.transaction[0]="wrong";
+ if(fault==="processed_only")f.responses.getSignatureStatuses.value[0].confirmationStatus="processed";
+ if(fault==="fee_changed")x.meta.fee++;
+ if(fault==="rent_cap_exceeded")x.meta.postBalances[x.tx.compileMessage().accountKeys.findIndex(k=>k.toBase58()===x.completion)]!++;
+ if(fault==="missing_completion")f.accounts.set(x.completion,null);
+ const result=await x.confirm();assert.equal(result.state,"unknown");assert.equal(result.rewardPayment,"not_established");assert.equal(result.retryAuthorized,false);
+});
+
+test("settlement uses transaction-local balances after independent credits and vault donations",async t=>{
+ const f=settlementFixture(t,7n),x=await settledReceipt(f),rows=x.meta.preTokenBalances,after=x.meta.postTokenBalances;
+ rows[0]!.uiTokenAmount.amount="105";after[0]!.uiTokenAmount.amount="115";
+ rows[1]!.uiTokenAmount.amount="20";rows[2]!.uiTokenAmount.amount="1002";after[1]!.uiTokenAmount.amount="1012";
+ const result=await x.confirm();assert.equal(result.state,"confirmed");assert.equal(result.settlement?.studentBeforeRaw,"105");assert.equal(result.settlement?.studentAfterRaw,"115");assert.equal(result.settlement?.sponsorSurplusRaw,"10");
+});
+
+test("settlement accounts for unsolicited vault rent donation using the correlated transaction",async t=>{
+ const f=settlementFixture(t),x=await settledReceipt(f),keys=x.tx.compileMessage().accountKeys.map(k=>k.toBase58());
+ const vault=keys.indexOf(f.vault),sponsor=keys.indexOf(f.terms.sponsor),before=x.meta.preBalances[vault]!;
+ x.meta.preBalances[vault]!+=9;x.meta.postBalances[sponsor]!+=9;const result=await x.confirm();assert.equal(result.state,"confirmed");assert.equal(result.settlement?.rentReturnedRaw,String(before+9));
 });

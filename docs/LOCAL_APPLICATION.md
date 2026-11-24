@@ -208,3 +208,79 @@ retention/privacy and recovery rules, plus any necessary reviewed schema change.
 Trusted verifier dispatch still needs approved credential custody and caller
 admission distinct from the wallet session. Those specific paths are not enabled
 by this integration; no unsigned proposal creates a successful lifecycle job.
+
+## One-lifecycle verifier admission and settlement review
+
+The candidate prepares admission of ONE chain-validated Submitted commitment to
+the existing verifier and v5 job store. This is an explicit backend configuration,
+not authority conferred by wallet login. Live verifier dispatch is hard-disabled (`LIVE_VERIFIER_DISPATCH=false`); the
+production CLI rejects dispatch configuration. Only isolated tests compose the
+adapter with explicit fixtures. A later separately approved activation would need
+`APP_CHAIN_READS=devnet` and all five independently approved settings below:
+
+- `APP_GITHUB_USER_TOKEN_FILE`: absolute path outside Git to an existing contributor
+  credential file, owned by the server user and readable only by that user (0600).
+  Symlinks are rejected. Never send its contents through the browser, chat or logs.
+- `APP_VERIFICATION_MILESTONE`: exact existing Submitted milestone PDA.
+- `APP_VERIFICATION_REPOSITORY_ID`: approved numeric GitHub repository ID.
+- `APP_VERIFICATION_CONTRIBUTOR_ID`: independently authenticated contributor ID.
+- `APP_VERIFICATION_COMMIT`: exact approved 40-character lowercase commit SHA.
+
+The existing `VERIFIER_PUBLIC_KEY`, `SOLANA_RPC_URL` and `TRUSTED_RUNNER_IMAGE`
+configuration still applies. GitHub authenticates the contributor against the
+recorded evidence; the same `VerifierService`, source checks and isolated
+`DockerRunner` run the agreed manifest. This change supplies no credentials,
+approved repository, runner image, signer or production configuration.
+
+The authenticated student first refreshes the actual Submitted scope, validates
+the private handoff, then explicitly requests independent verification. The new
+`POST /api/v1/workflow/dispatch` accepts exactly the handoff input, never a GitHub
+token or claimed verification result. Admission and session checks precede job
+creation. Public bindings alone enter the existing job tables; manifest bytes,
+nonce, source and credentials do not. The response contains a job ID for the
+existing authenticated job read route. Prepared, running, rejected and uncertain
+jobs are not automatically rerun, including after a dispatcher restart. Existing
+trusted job recovery/fencing remains authoritative.
+
+Passing verification is NOT operational attestation authorization. Offline dispatch
+runs the existing `DurableOfflineCoordinator`, including its fresh `AttestationAuthorizer`,
+exact-message policy, worker fences and mock receipt. It does not leave a separate
+completed-job path that the coordinator cannot resume. The browser/runtime test
+signs that original process-local mock message with separate fixture payer and
+verifier keys; no stored row or HTTP JSON is promoted to authority. The signing/custody,
+operational journal and action admission gates are unchanged.
+
+For an observed Verified milestone the frontend offers `settle milestone — review`.
+The existing wallet reviewer uses the actual `prepareSettlementTransaction` client,
+retains canonical student destination and Policy v2 sponsor destination validation,
+and includes atomic fallback provisioning in the exact reviewed message and rent.
+The application restricts private scope reads to the recorded sponsor/student;
+the on-chain instruction remains permissionless with its original ABI.
+
+Settlement confirmation requires the exact signed wire at a confirmed slot,
+canonical transaction token-balance metadata, exact reward/surplus deltas, vault
+closure/rent return and a freshly decoded matching completion record. Only that
+correlation may say `exact_reward_confirmed`. It describes the transaction's raw
+post-balances, not a guarantee that the student has not spent tokens afterward.
+Missing, failed, processed-only or inconsistent evidence remains Unknown/Failed,
+never authorizes retry, and cannot promote a transient Settled observation to paid.
+
+Live Phantom signing and broadcasting remain disabled in both browser and backend.
+No configuration above enables live verifier dispatch or a blockchain write. No new database schema, Rust
+layout, instruction ABI, mint, destination policy or dependency lock is introduced.
+
+Infrastructure outages (including unavailable/rate-limited GitHub or runner) enter
+existing recovery bookkeeping, not permanent verification rejection. Dispatch does
+not automatically retry them. Graceful application shutdown stops accepting HTTP
+requests, drains admitted verifier tasks, then closes SQLite. A forced process kill
+still requires the existing trusted interrupted-job recovery procedure.
+Transaction-local balances, rather than a stale review balance, establish receipt
+deltas; unrelated credits and unsolicited vault surplus/rent do not invalidate an
+otherwise exact payment. Actual fees and rent must stay within the reviewed costs.
+
+Offline preparation progresses the same existing job to `authorization_pending`
+only through the durable coordinator's fresh verifier and one-use message policy.
+Its local mock receipt carries `signingAuthorization: not_granted`; no historical
+row, serialized receipt, browser request or environment flag is live authority.
+The adapter rejects production RPC provenance and accepts only explicit offline
+fixture composition. Live dispatch has no production factory in this candidate.

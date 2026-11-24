@@ -343,3 +343,23 @@ test("private verifier handoff requires observed Submitted state and expiry clea
  expired=true;await scope.getByRole("button",{name:"Refresh chain observation",exact:true}).click();await expect(page.getByText("Your session expired. Sign in again to prepare instructions.",{exact:true})).toBeVisible();
  await expect(page.getByLabel("Verification evidence request JSON (private)",{exact:true})).toHaveCount(0);
 });
+
+test("admitted verification dispatch exposes only the existing job and clears it on scope edits",async({page})=>{
+ await browserFixture(page);await signIn(page);const scope=page.getByRole("region",{name:"Observed workflow state",exact:true});
+ await page.route(ORIGIN+"/api/v1/workflow/state",route=>route.fulfill({json:reply(workflowObservation("Submitted"),"offline_fixture")}));
+ await scope.getByLabel("Recorded sponsor wallet",{exact:true}).fill("fixture-sponsor");await scope.getByLabel("Internship ID to inspect",{exact:true}).fill("9");await scope.getByLabel("Milestone ID to inspect",{exact:true}).fill("1");await scope.getByRole("button",{name:"Refresh chain observation",exact:true}).click();
+ await scope.getByLabel("Verification evidence request JSON (private)",{exact:true}).fill("{}");
+ await page.route(ORIGIN+"/api/v1/workflow/verification",route=>route.fulfill({json:reply({kind:"verification_handoff",request:{fixture:"private test request"},dispatch:"contributor_admission_required",authorization:"not_granted",persisted:false,rewardPayment:"not_established"},"offline_fixture")}));
+ await scope.getByRole("button",{name:"Validate private verifier handoff",exact:true}).click();
+ await page.route(ORIGIN+"/api/v1/workflow/dispatch",route=>route.fulfill({json:reply({kind:"workflow_verification_job",mode:"offline-test-only",jobId:ID,milestone:"fixture-milestone",state:"verification_running",verificationOutcome:"none",persisted:true,attestation:"not_authorized",rewardPayment:"not_established",retryAuthorized:false},"offline_fixture")}));
+ await scope.getByRole("button",{name:"Request independent verification",exact:true}).click();await expect(scope).toContainText("State: verification running");await expect(scope).toContainText("Attestation not authorized; reward payment not established");
+ await scope.getByLabel("Milestone ID to inspect",{exact:true}).fill("2");await expect(scope.getByRole("button",{name:"Refresh verification job",exact:true})).toHaveCount(0);
+});
+
+test("Verified scope offers settlement review with the exact scope-only backend contract",async({page})=>{
+ await browserFixture(page);await signIn(page);const scope=page.getByRole("region",{name:"Observed workflow state",exact:true});
+ await page.route(ORIGIN+"/api/v1/workflow/state",route=>route.fulfill({json:reply(workflowObservation("Verified"),"offline_fixture")}));
+ await scope.getByLabel("Recorded sponsor wallet",{exact:true}).fill("fixture-sponsor");await scope.getByLabel("Internship ID to inspect",{exact:true}).fill("9");await scope.getByLabel("Milestone ID to inspect",{exact:true}).fill("1");await scope.getByRole("button",{name:"Refresh chain observation",exact:true}).click();
+ let sent=false;await page.route(ORIGIN+"/api/v1/workflow/review",async route=>{const q=route.request().postDataJSON();expect(q.operation).toBe("settle_milestone");expect(q.workflow).toEqual({apiVersion:VERSION,cluster:"devnet",sponsor:"fixture-sponsor",internshipId:"9",milestoneId:"1"});sent=true;await route.fulfill({json:reply({kind:"wallet_execution_review",state:"blocked",liveExecution:false,operation:"settle_milestone",wallet:WALLET,blockers:["missing_program"],deployment:null,messageBase64:null,rewardPayment:"not_established"},"unverified_devnet_rpc")});});
+ await scope.getByRole("button",{name:"settle milestone — review",exact:true}).click();await expect(scope.getByRole("heading",{name:"Execution blocked",exact:true})).toBeVisible();expect(sent).toBe(true);await expect(scope.getByRole("button",{name:"Approve transaction in wallet — disabled",exact:true})).toBeDisabled();
+});

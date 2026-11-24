@@ -1,3 +1,5 @@
+import {DurableOfflineCoordinator} from "../../../services/verifier/dist/src/durable-offline-coordinator.js";
+import {WorkflowVerification} from "../../../services/verifier/dist/src/workflow-verification.js";
 /** Offline test adapter only: actual browser/HTTPS, real SBF snapshots, no external RPC or live sender. */
 import assert from "node:assert/strict";
 import {createRequire} from "node:module";
@@ -14,7 +16,7 @@ import {WorkflowStateReader} from "../../../services/verifier/dist/src/workflow-
 import {ReadOnlyWalletRpc,WalletExecutionReviewer} from "../../../services/verifier/dist/src/devnet-wallet-review.js";
 import {APPLICATION_API_VERSION} from "../../../services/verifier/dist/src/application-api-contracts.js";
 import {manifest,COMMIT} from "../../../services/verifier/dist/test/helpers.js";
-import {retainPlans,retainVerificationRequest} from "./journey.mjs";
+import {retainPlans,retainVerificationRequest,verifierFor,retainVerifierComponents} from "./journey.mjs";
 const require=createRequire(new URL("../../../apps/web/package.json",import.meta.url));
 const {chromium}=require("@playwright/test");
 const lifecycle=await import("../../../services/lifecycle/dist/src/index.js");
@@ -27,7 +29,7 @@ async function tls(){
 }
 export async function stop(){
  if(!runtime)return;const x=runtime;runtime=null;
- try{await x.browser?.close();}finally{if(x.server){x.server.closeAllConnections();await new Promise(resolve=>x.server.close(resolve));}x.store?.close();rmSync(x.dir,{recursive:true,force:true});}
+ try{await x.browser?.close();await x.workflowVerification?.drain();}finally{if(x.server){x.server.closeAllConnections();await new Promise(resolve=>x.server.close(resolve));}x.store?.close();rmSync(x.dir,{recursive:true,force:true});}
 }
 async function login(role){
  const {page,pub}=runtime;
@@ -64,8 +66,14 @@ async function handleRequest(q,pub,signAuth){
    // Bind first to obtain the actual loopback port; no operational endpoint or fixed port is invented.
    const {createServer}=await import("node:net");const probe=createServer();probe.listen(0,"127.0.0.1");await once(probe,"listening");const port=probe.address().port;await new Promise(resolve=>probe.close(resolve));
    const origin=runtime.origin="https://localhost:"+port;
+   const workflowState=new WorkflowStateReader(rpc,"offline_fixture"),components=verifierFor(pub,()=>runtime.accounts);
+   const coordinator=new DurableOfflineCoordinator(store,components.service,components.reader,{verifier:pub.verifier,feePayer:pub.caller,maxAgeMs:30000,minRemainingBlockHeights:10},"browser_verifier",{read:async()=>({rpc:"https://api.devnet.solana.com",genesisHash:"EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",blockhash:runtime.blockhash,lastValidBlockHeight:500,currentBlockHeight:100,observedAtMs:performance.now(),valid:true})});
+   components.takeAuthorizedMessage=()=>{const prepared=runtime.authorized;assert(prepared&&!prepared.used&&performance.now()-prepared.at<30000);prepared.used=true;return coordinator.readMockMessage(prepared.receipt);};
+   const workflowVerification=runtime.workflowVerification=new WorkflowVerification(workflowState,store,coordinator,async binding=>{
+    assert.equal(binding.student,pub.student);assert.equal(binding.contributorId,"2002");return "test-user-credential";
+   },receipt=>{runtime.authorized={receipt,at:performance.now(),used:false};});runtime.verifierComponents=components;
    runtime.server=await createApplicationServer(certificates,{assetsDirectory:fileURLToPath(new URL("../../../apps/web/dist/",import.meta.url)),sessions:new WalletSessions({origin,domain:new URL(origin).host,cluster:"devnet"}),store,
-    service:{verify:async()=>{throw Error("browser_verification_dispatch_forbidden");}},workflowState:new WorkflowStateReader(rpc,"offline_fixture"),walletReview:new WalletExecutionReviewer(rpc,async()=>undefined)});
+    service:{verify:async()=>{throw Error("browser_verification_dispatch_forbidden");}},workflowState,workflowVerification,walletReview:new WalletExecutionReviewer(rpc,async()=>undefined)});
    runtime.server.listen(port,"127.0.0.1");await once(runtime.server,"listening");
    runtime.browser=await chromium.launch({env:{...process.env,HOME:home,XDG_DATA_HOME:join(home,".local/share")}});
    const context=await runtime.browser.newContext({ignoreHTTPSErrors:false}),page=runtime.page=await context.newPage();
@@ -90,12 +98,12 @@ async function handleRequest(q,pub,signAuth){
    await page.getByRole("button",{name:"create internship — review",exact:true}).click();
    await page.getByRole("heading",{name:"Execution blocked",exact:true}).waitFor();
    assert(await page.getByRole("button",{name:"Approve transaction in wallet — disabled",exact:true}).isDisabled());
-   retainPlans(organization,null,null);return {ok:true,organization,nowUnixSeconds:now,browser:"actual_chromium_real_https",signing:"offline_provider_double",trust:"isolated_profile_only"};
+   retainPlans(organization,null,null);retainVerifierComponents(runtime.verifierComponents);return {ok:true,organization,nowUnixSeconds:now,browser:"actual_chromium_real_https",signing:"offline_provider_double",trust:"isolated_profile_only"};
   }catch(error){await stop();throw error;}
  }
  assert(runtime);
  if(q.op==="browser-stop"){const errors=runtime.errors.slice();await stop();assert.deepEqual(errors,[]);return {ok:true,errors};}
- runtime.accounts=q.accounts??runtime.accounts;
+ runtime.accounts=q.accounts??runtime.accounts;runtime.blockhash=q.blockhash??runtime.blockhash;
  if(q.op==="browser-observe"){
   const section=runtime.page.getByRole("region",{name:"Observed workflow state",exact:true});await section.getByRole("button",{name:"Refresh chain observation",exact:true}).click();
   await section.getByRole("heading",{name:q.expected,exact:true}).waitFor();
@@ -107,13 +115,18 @@ async function handleRequest(q,pub,signAuth){
   await page.locator('[name="proposal"]').fill(JSON.stringify(organization));for(const [name,value] of Object.entries(evidence))await page.locator('[name="'+name+'"]').fill(String(value));
   await page.getByRole("button",{name:"Validate evidence & prepare submission",exact:true}).click();await page.getByRole("heading",{name:"Unsigned instruction plan prepared",exact:true}).waitFor();
   const submission=JSON.parse(await page.getByRole("textbox",{name:"Prepared instruction JSON",exact:true}).inputValue());
-  retainPlans(organization,submission,evidence);return {ok:true,submission};
+  retainPlans(organization,submission,evidence);retainVerifierComponents(runtime.verifierComponents);return {ok:true,submission};
  }
  if(q.op==="browser-handoff"){
   const {page}=runtime;await page.getByRole("button",{name:"Validate private verifier handoff",exact:true}).click();
   await page.getByText(/Request matches the observed submission/).waitFor();
   const request=JSON.parse(await page.getByRole("textbox",{name:"Private validated verifier request — do not publish",exact:true}).inputValue());
-  assert.equal(request.student,pub.student);assert.equal(request.milestone,runtime.organization.milestone);retainVerificationRequest(request);return {ok:true,milestone:request.milestone};
+  assert.equal(request.student,pub.student);assert.equal(request.milestone,runtime.organization.milestone);retainVerificationRequest(request);
+  await page.getByRole("button",{name:"Request independent verification",exact:true}).click();
+  await page.getByRole("button",{name:"Refresh verification job",exact:true}).waitFor();await runtime.workflowVerification.drain();
+  await page.getByRole("button",{name:"Refresh verification job",exact:true}).click();await page.getByText(/State: authorization pending. Outcome: passed/).waitFor();
+  const jobs=runtime.store.jobs.listRecoveryRequired().entries;assert.equal(jobs.length,1);assert.equal(jobs[0].job.state,"authorization_pending");assert.equal(jobs[0].job.bindings.milestone,request.milestone);assert.equal(runtime.store.offlineHandoffs.get(jobs[0].job.jobId)?.outcome,"recorded");
+  return {ok:true,milestone:request.milestone};
  }
  throw Error("unknown_browser_test_operation");
 }

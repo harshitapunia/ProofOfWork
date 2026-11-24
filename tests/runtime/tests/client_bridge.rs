@@ -1580,7 +1580,7 @@ fn browser_call(w: &mut Worker, f: &Fixture, operation: &str, expected: &str) ->
             accounts.insert(key.to_string(),json!({"owner":a.owner.to_string(),"executable":a.executable,"dataHex":hex(&a.data),"lamports":a.lamports}));
         }
     }
-    let value = w.call(json!({"op":operation,"accounts":accounts,"expected":expected}));
+    let value = w.call(json!({"op":operation,"accounts":accounts,"expected":expected,"blockhash":f.svm.latest_blockhash().to_string()}));
     assert_eq!(value["ok"], true, "browser integration: {value}");
     value
 }
@@ -1632,8 +1632,12 @@ fn browser_https_backend_and_signed_sbf_complete_journey() {
     assert_eq!(f.account(s.milestone).data[272], 3);
     assert_eq!(f.token_amount(f.student_ata), 0);
     let attest = journey_call(&mut w, &f, "attest", None);
-    assert_eq!(attest["requiredSigners"], json!([f.verifier.to_string()]));
+    assert_eq!(
+        attest["requiredSigners"],
+        json!([f.caller.to_string(), f.verifier.to_string()])
+    );
     send(&mut f, &attest, "browser-attest");
+    assert_eq!(journey_call(&mut w, &f, "attest", None)["ok"], false);
     browser_call(&mut w, &f, "browser-observe", "Verified");
     let rent = f.account(s.vault).lamports;
     let sponsor_lamports = f.account(f.sponsor).lamports;

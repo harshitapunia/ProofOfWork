@@ -4,7 +4,7 @@
  */
 import { createRequire } from "node:module";
 const require = createRequire(new URL("../../../packages/finance-client/package.json", import.meta.url));
-const {PublicKey, Transaction, TransactionInstruction} = require("@solana/web3.js");
+const {PublicKey, Transaction, TransactionInstruction, Message} = require("@solana/web3.js");
 const client = await import("../../../packages/finance-client/dist/src/index.js");
 const {prepareWorkflow} = await import("../../../services/verifier/dist/src/workflow-preparation.js");
 const {VerifierService} = await import("../../../services/verifier/dist/src/service.js");
@@ -27,22 +27,33 @@ export function plan(pub) {
  retained = {organization,submission,evidence};
  return {ok:true,organization,submission,externalDependencies:"offline_github_and_runner_fixtures"};
 }
-export async function instruction(q,pub) {
- if (!retained) throw new Error("journey_plan_required");
- let ix,signer;
- if (q.action === "attest") {
+export function retainVerifierComponents(value){retained.verifierComponents=value;}
+export function verifierFor(pub,accounts,failure){
   const rpc = async (url,init) => {
    if (url !== client.SETTLEMENT_DEVNET_RPC) throw new Error("unexpected_offline_endpoint");
    const request = JSON.parse(init.body);
    if (request.method !== "getMultipleAccounts") throw new Error("offline_write_forbidden");
    return Response.json({result:{value:request.params[0].map(address=>{
-    const a=q.accounts[address];return a?{owner:a.owner,executable:a.executable,data:[Buffer.from(a.dataHex,"hex").toString("base64"),"base64"]}:null;
+    const a=accounts()[address];return a?{owner:a.owner,executable:a.executable,data:[Buffer.from(a.dataHex,"hex").toString("base64"),"base64"]}:null;
    })}});
   };
   const reader = new DevnetAttestationReader(client.SETTLEMENT_DEVNET_RPC,pub.verifier,rpc);
-  const overrides=q.failure === "github"?{"/user":{id:9}}:{};
-  const runner = {run:async()=>CASES.map(c=>({id:c.id,passed:q.failure !== "runner"}))};
+  const overrides=failure === "github"?{"/user":{id:9}}:{};
+  const runner = {run:async()=>CASES.map(c=>({id:c.id,passed:failure !== "runner"}))};
   const service = new VerifierService(new GitHub(githubFetch(overrides)),reader,runner);
+  return {reader,service};
+}
+export async function instruction(q,pub) {
+ if (!retained) throw new Error("journey_plan_required");
+ let ix,signer;
+ if (q.action === "attest" && !q.failure && retained.verifierComponents?.takeAuthorizedMessage) {
+  const message=retained.verifierComponents.takeAuthorizedMessage(),transaction=Transaction.populate(Message.from(message));
+  const required=transaction.compileMessage().accountKeys.slice(0,transaction.compileMessage().header.numRequiredSignatures).map(k=>k.toBase58());
+  if(JSON.stringify(required)!==JSON.stringify([pub.caller,pub.verifier]))throw Error("incorrect_policy_signers");
+  return {transaction,signer:pub.caller,signers:required,policyMessage:message};
+ }
+ if (q.action === "attest") {
+  const {reader,service}=q.failure?verifierFor(pub,()=>q.accounts,q.failure):(retained.verifierComponents??verifierFor(pub,()=>q.accounts));
   const authorizer = new AttestationAuthorizer(service,reader,pub.verifier);
   const {organization,evidence} = retained;
   const request = {...(retained.verifierRequest??{manifestBase64:Buffer.from(organization.terms.manifest).toString("base64"),milestone:organization.milestone,

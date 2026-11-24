@@ -31,10 +31,15 @@ export async function request<T>(path: string, kind: string, body?: object, sign
     && d.provenance===value.provenance && ["student","verifier","requirementsHash","rewardAmountRaw","assignBy","submitBy","evidenceHash","verifiedAt","completion","settledAt","vaultAmountRaw"].every(k=>d[k]===null||typeof d[k]==="string")
     && (d.vaultClosed===null||typeof d.vaultClosed==="boolean") && Number.isSafeInteger(d.slot) && d.slot>=0 && d.commitment==="confirmed" && d.persisted===false && typeof d.internshipExists==="boolean" && typeof d.milestoneExists==="boolean"
     && (d.status===null || ["Created","Funded","Assigned","Submitted","Verified","Settled","Refunded"].includes(d.status)) && d.rewardPayment==="not_established"
-    : kind === "verification_handoff" ? d.request && typeof d.request==="object" && d.dispatch==="unavailable" && d.authorization==="not_granted" && d.persisted===false && d.rewardPayment==="not_established"
+    : kind === "workflow_verification_job" ? d.mode==="offline-test-only" && strings("jobId","milestone","state") && ["none","passed","rejected"].includes(d.verificationOutcome) && d.persisted===true && d.attestation==="not_authorized" && d.rewardPayment==="not_established" && d.retryAuthorized===false
+    : kind === "verification_handoff" ? d.request && typeof d.request==="object" && ["unavailable","contributor_admission_required"].includes(d.dispatch) && d.authorization==="not_granted" && d.persisted===false && d.rewardPayment==="not_established"
     : kind === "wallet_execution_revalidation" ? d.liveExecution === false && d.state === "ready_for_review"
     : kind === "wallet_execution_signature" ? d.liveExecution === false && strings("signature")
-    : kind === "wallet_execution_confirmation" ? ["confirmed","failed","unknown"].includes(d.state) && strings("signature") && d.rewardPayment === "not_established" && d.retryAuthorized === false && (d.explorerUrl === null || typeof d.explorerUrl === "string")
+    : kind === "wallet_execution_confirmation" ? ["confirmed","failed","unknown"].includes(d.state) && strings("signature") && (d.rewardPayment === "not_established" || (d.state==="confirmed"&&d.rewardPayment==="exact_reward_confirmed"&&d.settlement&&d.settlement.vaultClosed===true
+      && ["student","mint","sponsorDestination","completion"].every(k=>typeof d.settlement[k]==="string")
+      && ["rewardAmountRaw","studentBeforeRaw","studentAfterRaw","sponsorSurplusRaw","rentReturnedRaw"].every(k=>typeof d.settlement[k]==="string"&&/^(0|[1-9][0-9]*)$/.test(d.settlement[k]))
+      && BigInt(d.settlement.studentAfterRaw)-BigInt(d.settlement.studentBeforeRaw)===BigInt(d.settlement.rewardAmountRaw)))
+    && d.retryAuthorized === false && (d.explorerUrl === null || typeof d.explorerUrl === "string")
     : kind === "wallet_execution_review" ? ["blocked","ready_for_review"].includes(d.state) && d.liveExecution === false
     && strings("operation","wallet") && Array.isArray(d.blockers) && d.blockers.every((v:unknown)=>typeof v==="string") && d.rewardPayment === "not_established"
     && (d.deployment === null || (typeof d.deployment === "object" && typeof d.deployment.programExists === "boolean" && typeof d.deployment.executable === "boolean"
@@ -59,6 +64,8 @@ export function message(error: unknown): string {
   const labels: Record<string, string> = {
     chain_reader_unavailable: "Chain observation is unavailable. The existing Devnet read configuration must be enabled; execution remains disabled.",
     chain_state_invalid: "The observed accounts are missing, inconsistent or invalid. No lifecycle success was accepted.",
+    verification_dispatch_unavailable: "Independent verifier dispatch is not configured. An operator must admit contributor authentication and the approved runner; wallet login cannot substitute for that approval.",
+    github_contributor_admission_required: "Independent GitHub contributor authentication has not been admitted for this exact work. No verification job was started.",
     verification_not_available: "Only the recorded student can prepare verification for an actual Submitted milestone.",
     invalid_verification_evidence: "The private verifier request is invalid or does not match the observed submission.",
     evidence_mismatch: "The private evidence and manifest do not match the actual submission commitments.",

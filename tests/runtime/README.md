@@ -169,3 +169,13 @@ changes system or user certificate trust or bypasses HTTPS validation. Test
 SQLite/profile files are isolated and cleaned up; no operational wallet or
 application database is loaded. See Chromium's official
 [Linux certificate management](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/linux/cert_management.md).
+
+The browser journey also requests backend verification dispatch for its actual
+Submitted VM commitment. Scoped contributor admission, GitHub HTTP and runner
+outcomes are explicit offline doubles; the real application, v5 job writer and
+existing verifier run, and the browser refreshes the genuine job status. No private
+credential, manifest or nonce enters the job ledger. The existing durable coordinator runs fresh verification/authorization and exact
+message policy. Its original process-local mock receipt supplies the message for
+the separate fixture verifier/payer signatures executed by LiteSVM. A cloned
+receipt, changed message or replay cannot supply the wire; a passed job itself
+is never operational signing authority.
