@@ -58,3 +58,26 @@ test("prefunded empty submission/completion PDAs do not fabricate submission or 
  f.accounts.set(f.submission.toBase58(),empty);f.accounts.set(deriveCompletion(f.milestone)[0].toBase58(),empty);
  const v=await f.reader.read(f.target,f.request.student);assert.equal(v.status,"Assigned");assert.equal(v.evidenceHash,null);assert.equal(v.completion,null);
 });
+
+test("prefunded empty internship and milestone PDAs are absent, not initialized",async()=>{
+ const empty={owner:PublicKey.default.toBase58(),executable:false,data:["","base64"],lamports:1};
+ for(const parentExists of [false,true]){
+  const f=setup(),parent=f.accounts.get(f.internship.toBase58());f.accounts.clear();
+  f.accounts.set(f.internship.toBase58(),parentExists?parent:empty);f.accounts.set(f.milestone.toBase58(),empty);
+  const before=JSON.stringify([...f.accounts]),v=await f.reader.read(f.target,f.sponsor);
+  assert.equal(v.internshipExists,parentExists);assert.equal(v.milestoneExists,false);assert.equal(v.status,null);assert.equal(v.persisted,false);
+  assert.equal(JSON.stringify([...f.accounts]),before);
+  await assert.rejects(f.reader.read(f.target,f.request.student),{message:"resource_not_found",status:404});
+ }
+});
+test("absence checks still reject malformed initialized parents with a mapped chain error",async()=>{
+ const f=setup();f.accounts.clear();f.accounts.set(f.internship.toBase58(),{owner:TOKEN_PROGRAM_ID,executable:false,data:["","base64"]});
+ await assert.rejects(f.reader.read(f.target,f.sponsor),{message:"chain_state_invalid",status:503});
+});
+test("prefunded milestone does not hide initialized children or an invalid account owner",async()=>{
+ const f=setup(),empty={owner:PublicKey.default.toBase58(),executable:false,data:["","base64"],lamports:1};
+ f.accounts.set(f.milestone.toBase58(),empty);
+ await assert.rejects(f.reader.read(f.target,f.sponsor),{message:"chain_state_invalid",status:503});
+ f.accounts.clear();f.accounts.set(f.milestone.toBase58(),{...empty,owner:TOKEN_PROGRAM_ID});
+ await assert.rejects(f.reader.read(f.target,f.sponsor),{message:"chain_state_invalid",status:503});
+});

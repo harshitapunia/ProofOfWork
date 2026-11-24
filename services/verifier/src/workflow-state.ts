@@ -38,13 +38,13 @@ export class WorkflowStateReader {
   check(await this.rpc.call("getGenesisHash",[],signal)===SETTLEMENT_DEVNET_GENESIS,"wrong_cluster",503);
   const batch=await this.rpc.accounts([internship,milestone,submission,completion,vault],0,signal);
   const [i,m,s,c,v]=batch.values;
-  const out:WorkflowState={kind:"workflow_state",internship,milestone,internshipExists:i!==null,milestoneExists:m!==null,
+  const out:WorkflowState={kind:"workflow_state",internship,milestone,internshipExists:!empty(i),milestoneExists:!empty(m),
    slot:batch.slot,commitment:"confirmed",provenance:this.provenance,persisted:false,status:null,student:null,verifier:null,requirementsHash:null,
    rewardAmountRaw:null,assignBy:null,submitBy:null,evidenceHash:null,verifiedAt:null,completion:null,settledAt:null,vaultAmountRaw:null,vaultClosed:null,
    verification:"not_observed",rewardPayment:"not_established"};
-  if(m===null){check(wallet===q.sponsor,"resource_not_found",404);check(empty(s)&&empty(c)&&empty(v),"chain_state_invalid",503);
-   if(i!==null)decodeInternship(internship,i);return out;}
   try{
+   if(empty(m)){check(wallet===q.sponsor,"resource_not_found",404);check(empty(s)&&empty(c)&&empty(v),"chain_state_invalid",503);
+    if(!empty(i))decodeInternship(internship,i);return out;}
    const parent=decodeInternship(internship,i),state=decodeMilestone(milestone,m,parent);
    check(wallet===state.sponsor||wallet===state.student,"resource_not_found",404);
    const needs=["Submitted","Verified","Settled"].includes(state.status);
