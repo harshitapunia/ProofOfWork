@@ -14,6 +14,8 @@ const {AttestationAuthorizer} = await import("../../../services/verifier/dist/sr
 const {CASES} = await import("../../../services/verifier/dist/src/manifest.js");
 const {manifest,githubFetch,TOKEN,COMMIT} = await import("../../../services/verifier/dist/test/helpers.js");
 let retained;
+export function retainPlans(organization,submission,evidence){retained={organization,submission,evidence};}
+export function retainVerificationRequest(request){retained.verifierRequest=structuredClone(request);}
 const envelope = {apiVersion:"proofwork-application-api-v1",cluster:"devnet"};
 export function plan(pub) {
  const terms = {title:"Offline runtime internship",note:"Fictional fixture, never Devnet evidence",sponsor:pub.sponsor,student:pub.student,verifier:pub.verifier,
@@ -43,8 +45,8 @@ export async function instruction(q,pub) {
   const service = new VerifierService(new GitHub(githubFetch(overrides)),reader,runner);
   const authorizer = new AttestationAuthorizer(service,reader,pub.verifier);
   const {organization,evidence} = retained;
-  const request = {manifestBase64:Buffer.from(organization.terms.manifest).toString("base64"),milestone:organization.milestone,
-   student:pub.student,repositoryId:"1001",owner:organization.terms.owner,repository:organization.terms.repository,...evidence,
+  const request = {...(retained.verifierRequest??{manifestBase64:Buffer.from(organization.terms.manifest).toString("base64"),milestone:organization.milestone,
+   student:pub.student,repositoryId:"1001",owner:organization.terms.owner,repository:organization.terms.repository,...evidence}),
    ...(q.failure === "evidence"?{nonce:"aa".repeat(32)}:{})};
   const ticket=await authorizer.prepare(request,TOKEN);
   ix=await authorizer.takeInstruction(ticket);signer=pub.verifier;
@@ -54,7 +56,7 @@ export async function instruction(q,pub) {
  } else if(q.action === "settle") {
   ix=client.settleMilestoneInstruction({sponsor:pub.sponsor,student:pub.student,caller:pub.caller,internshipId:8n,milestoneId:1n});signer=pub.caller;
  } else {
-  const step=[...retained.organization.steps,...retained.submission.steps].find(s=>s.action===q.action);
+  const step=[...retained.organization.steps,...(retained.submission?.steps??[])].find(s=>s.action===q.action);
   if(!step || step.instructions.length!==1)throw new Error("unknown_journey_step");
   const i=step.instructions[0];
   ix=new TransactionInstruction({programId:new PublicKey(i.programId),keys:i.keys.map(k=>({...k,pubkey:new PublicKey(k.pubkey)})),data:Buffer.from(i.dataBase64,"base64")});

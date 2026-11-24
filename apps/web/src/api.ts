@@ -27,7 +27,12 @@ export async function request<T>(path: string, kind: string, body?: object, sign
     throw new ApiError("invalid_api_response");
   const d = value.data;
   const strings = (...keys: string[]) => keys.every(k => typeof d[k] === "string");
-  const valid = kind === "wallet_execution_revalidation" ? d.liveExecution === false && d.state === "ready_for_review"
+  const valid = kind === "workflow_state" ? strings("internship","milestone","provenance") && ["offline_fixture","unverified_devnet_rpc"].includes(d.provenance)
+    && d.provenance===value.provenance && ["student","verifier","requirementsHash","rewardAmountRaw","assignBy","submitBy","evidenceHash","verifiedAt","completion","settledAt","vaultAmountRaw"].every(k=>d[k]===null||typeof d[k]==="string")
+    && (d.vaultClosed===null||typeof d.vaultClosed==="boolean") && Number.isSafeInteger(d.slot) && d.slot>=0 && d.commitment==="confirmed" && d.persisted===false && typeof d.internshipExists==="boolean" && typeof d.milestoneExists==="boolean"
+    && (d.status===null || ["Created","Funded","Assigned","Submitted","Verified","Settled","Refunded"].includes(d.status)) && d.rewardPayment==="not_established"
+    : kind === "verification_handoff" ? d.request && typeof d.request==="object" && d.dispatch==="unavailable" && d.authorization==="not_granted" && d.persisted===false && d.rewardPayment==="not_established"
+    : kind === "wallet_execution_revalidation" ? d.liveExecution === false && d.state === "ready_for_review"
     : kind === "wallet_execution_signature" ? d.liveExecution === false && strings("signature")
     : kind === "wallet_execution_confirmation" ? ["confirmed","failed","unknown"].includes(d.state) && strings("signature") && d.rewardPayment === "not_established" && d.retryAuthorized === false && (d.explorerUrl === null || typeof d.explorerUrl === "string")
     : kind === "wallet_execution_review" ? ["blocked","ready_for_review"].includes(d.state) && d.liveExecution === false
@@ -52,6 +57,11 @@ export async function request<T>(path: string, kind: string, body?: object, sign
 export function message(error: unknown): string {
   const code = error instanceof ApiError ? error.code : "wallet_rejected";
   const labels: Record<string, string> = {
+    chain_reader_unavailable: "Chain observation is unavailable. The existing Devnet read configuration must be enabled; execution remains disabled.",
+    chain_state_invalid: "The observed accounts are missing, inconsistent or invalid. No lifecycle success was accepted.",
+    verification_not_available: "Only the recorded student can prepare verification for an actual Submitted milestone.",
+    invalid_verification_evidence: "The private verifier request is invalid or does not match the observed submission.",
+    evidence_mismatch: "The private evidence and manifest do not match the actual submission commitments.",
     network_unavailable: "Could not reach the API. Check your connection and try again.",
     api_unavailable: "The wallet API is unavailable. The default backend does not register these routes.",
     authentication_required: "Your session expired. Sign in again to read this record.",

@@ -30,14 +30,14 @@ test('browser paths and methods match exact backend dispatch for existing routes
   assert.match(api, /p.signMessage\(bytes, "utf8"\)/);
 });
 test('browser source has no transaction signing, sending, custody or token storage capabilities', () => {
-  const source = ['api.ts','App.tsx','Workflow.tsx','demo.ts','routes.ts'].map(f => readFileSync('src/' + f,'utf8')).join('\n');
+  const source = ['api.ts','App.tsx','Workflow.tsx','WorkflowStatus.tsx','demo.ts','routes.ts'].map(f => readFileSync('src/' + f,'utf8')).join('\n');
   assert.doesNotMatch(source, /signTransaction|signAndSendTransaction|sendRawTransaction|localStorage|sessionStorage|privateKey|secretKey|seedPhrase/);
   assert.match(source, /rewardPayment: "not_established"/);
   assert.match(source, /Fictional records\. No live Devnet data/);
 });
 
 test('wallet execution gate is explicit and browser has no automatic send or custody capability',()=>{
- const files=['api.ts','App.tsx','Workflow.tsx','ExecutionReview.tsx','wallet-execution.ts','demo.ts','routes.ts'];
+ const files=['api.ts','App.tsx','Workflow.tsx','WorkflowStatus.tsx','ExecutionReview.tsx','wallet-execution.ts','demo.ts','routes.ts'];
  const source=files.map(f=>readFileSync('src/'+f,'utf8')).join('\n');
  assert.doesNotMatch(source,/sendRawTransaction|localStorage|sessionStorage|privateKey|secretKey|seedPhrase/);
  assert.match(readFileSync('src/wallet-execution.ts','utf8'),/LIVE_WALLET_EXECUTION = false/);

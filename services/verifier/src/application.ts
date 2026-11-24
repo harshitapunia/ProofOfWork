@@ -1,3 +1,4 @@
+import type { WorkflowStateReader } from "./workflow-state.js";
 import type { WalletExecutionReviewer } from "./devnet-wallet-review.js";
 import { applicationReply, applicationRequestId } from "./application-api-contracts.js";
 /** Explicit local HTTPS composition. No default CLI activation, proxy or transaction capability. */
@@ -18,6 +19,7 @@ export interface ApplicationOptions {
   readonly store: LifecycleStore;
   readonly service: Pick<VerifierService, "verify">;
   readonly chain?: ApplicationChainSource;
+  readonly workflowState?: WorkflowStateReader;
   readonly walletReview?: WalletExecutionReviewer;
 }
 export function applicationOrigin(value: string): URL {
@@ -29,7 +31,7 @@ export function applicationOrigin(value: string): URL {
 }
 /** Loads only four known production assets; never serves arbitrary files, config or test artifacts. */
 export async function createApplicationHandler(options: ApplicationOptions): Promise<RequestListener> {
-  const { sessions, store, service, chain, walletReview } = options;
+  const { sessions, store, service, chain, walletReview, workflowState } = options;
   applicationOrigin(sessions.origin);
   if (!isAbsolute(options.assetsDirectory)) throw new Error("invalid_asset_directory");
   const files = [
@@ -41,7 +43,7 @@ export async function createApplicationHandler(options: ApplicationOptions): Pro
   const assets = new Map<string, { bytes: Buffer; type: string }>();
   for (const [url, file, type] of files) assets.set(url, { bytes: await readFile(resolve(options.assetsDirectory, file)), type });
   assets.set("/index.html", assets.get("/")!);
-  const api = createVerifierHandler(service, new WalletApplicationHttp(sessions, { store, timeoutMs: 5000, ...(chain ? { chain } : {}), ...(walletReview ? { walletReview } : {}) }));
+  const api = createVerifierHandler(service, new WalletApplicationHttp(sessions, { store, timeoutMs: 5000, ...(chain ? { chain } : {}), ...(walletReview ? { walletReview } : {}), ...(workflowState ? {workflowState} : {}) }));
   return (request, response) => {
     response.setHeader("cache-control", "no-store");
     response.setHeader("x-content-type-options", "nosniff");

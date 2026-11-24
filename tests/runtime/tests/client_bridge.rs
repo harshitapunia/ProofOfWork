@@ -49,6 +49,7 @@ fn unhex(s: &str) -> Vec<u8> {
 static BRIDGE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct Worker {
+    browser_active: bool,
     _guard: std::sync::MutexGuard<'static, ()>,
     previous: [(String, Option<std::ffi::OsString>); 6],
     child: Child,
@@ -81,6 +82,7 @@ impl Worker {
         let input = child.stdin.take().unwrap();
         let output = BufReader::new(child.stdout.take().unwrap());
         let mut w = Self {
+            browser_active: false,
             _guard: guard,
             previous,
             child,
@@ -105,7 +107,14 @@ impl Worker {
             self.output.read_line(&mut line).unwrap() > 0,
             "worker stopped"
         );
-        serde_json::from_str(&line).unwrap()
+        let value: Value = serde_json::from_str(&line).unwrap();
+        if q["op"] == "browser-start" && value["ok"] == true {
+            self.browser_active = true;
+        }
+        if q["op"] == "browser-stop" {
+            self.browser_active = false;
+        }
+        value
     }
     fn prepare(&mut self, f: &Fixture, mut extra: Value) -> Value {
         let mut accounts = serde_json::Map::new();
@@ -128,6 +137,23 @@ impl Worker {
 }
 impl Drop for Worker {
     fn drop(&mut self) {
+        if self.browser_active {
+            let _ = writeln!(
+                self.input,
+                "{}",
+                json!({"op":"browser-stop","shutdown":true})
+            );
+            let _ = self.input.flush();
+            // Never wait on a blocking response while unwinding. Give graceful
+            // browser cleanup a deadline, then kill/reap below even if it stalls.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                match self.child.try_wait() {
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
+                    _ => break,
+                }
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         for (key, value) in &self.previous {
@@ -1545,4 +1571,95 @@ fn full_workflow_verification_failures_never_attest_or_pay() {
     f.assert_unchanged(&before);
     assert_eq!(f.token_amount(f.student_ata), 0);
     assert!(f.svm.get_account(&s.completion).is_none());
+}
+
+fn browser_call(w: &mut Worker, f: &Fixture, operation: &str, expected: &str) -> Value {
+    let mut accounts = serde_json::Map::new();
+    for owner in [PROGRAM_ID, TOKEN, solana_sdk_ids::system_program::ID] {
+        for (key, a) in f.svm.get_program_accounts(&owner) {
+            accounts.insert(key.to_string(),json!({"owner":a.owner.to_string(),"executable":a.executable,"dataHex":hex(&a.data),"lamports":a.lamports}));
+        }
+    }
+    let value = w.call(json!({"op":operation,"accounts":accounts,"expected":expected}));
+    assert_eq!(value["ok"], true, "browser integration: {value}");
+    value
+}
+#[test]
+fn browser_https_backend_and_signed_sbf_complete_journey() {
+    let mut w = Worker::new();
+    let mut f = Fixture::new();
+    signed(&mut f);
+    let plan = browser_call(&mut w, &f, "browser-start", "");
+    f.set_time(plan["nowUnixSeconds"].as_i64().unwrap());
+    f.internship = plan["organization"]["internship"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let s = f.scope(1);
+    assert!(f.svm.get_account(&f.internship).is_none());
+    browser_call(
+        &mut w,
+        &f,
+        "browser-observe",
+        "Scope absent at observed slot",
+    );
+    for (action, status) in [
+        ("create_internship", "Internship observed; milestone absent"),
+        ("create_milestone", "Created"),
+        ("fund_milestone", "Funded"),
+        ("assign_student", "Assigned"),
+    ] {
+        let wire = journey_call(&mut w, &f, action, None);
+        send(&mut f, &wire, &format!("browser-{action}"));
+        browser_call(&mut w, &f, "browser-observe", status);
+        if action == "fund_milestone" {
+            assert_eq!(f.token_amount(s.vault), REWARD);
+            assert_eq!(f.token_amount(f.sponsor_ata), INITIAL_SUPPLY - REWARD);
+        }
+    }
+    let student = browser_call(&mut w, &f, "browser-student", "");
+    let submit = journey_call(&mut w, &f, "submit_milestone", None);
+    send(&mut f, &submit, "browser-submit");
+    assert_eq!(
+        &f.account(s.submission).data[72..104],
+        unhex(student["submission"]["evidenceHash"].as_str().unwrap())
+    );
+    browser_call(&mut w, &f, "browser-observe", "Submitted");
+    browser_call(&mut w, &f, "browser-handoff", "");
+    let denied = journey_call(&mut w, &f, "attest", Some("runner"));
+    assert_eq!(denied["ok"], false);
+    assert_eq!(f.account(s.milestone).data[272], 3);
+    assert_eq!(f.token_amount(f.student_ata), 0);
+    let attest = journey_call(&mut w, &f, "attest", None);
+    assert_eq!(attest["requiredSigners"], json!([f.verifier.to_string()]));
+    send(&mut f, &attest, "browser-attest");
+    browser_call(&mut w, &f, "browser-observe", "Verified");
+    let rent = f.account(s.vault).lamports;
+    let sponsor_lamports = f.account(f.sponsor).lamports;
+    let settle = journey_call(&mut w, &f, "settle", None);
+    send(&mut f, &settle, "browser-settle");
+    assert_eq!(f.token_amount(f.student_ata), REWARD);
+    assert_eq!(f.token_amount(f.sponsor_ata), INITIAL_SUPPLY - REWARD);
+    assert!(f.svm.get_account(&s.vault).is_none());
+    assert_eq!(f.account(f.sponsor).lamports, sponsor_lamports + rent);
+    let completion = f.program_account(s.completion, 249, COMPLETION_DISC);
+    assert_eq!(&completion.data[40..72], f.student.as_ref());
+    assert_eq!(
+        &completion.data[200..232],
+        unhex(student["submission"]["evidenceHash"].as_str().unwrap())
+    );
+    f.assert_conserved();
+    browser_call(&mut w, &f, "browser-observe", "Settled");
+    browser_call(&mut w, &f, "browser-stop", "");
+    // Fault injection: the browser is already gone, so a second stop errors
+    // and the worker stays alive. Drop must still kill/reap it by its deadline.
+    w.browser_active = true;
+    let cleanup_started = std::time::Instant::now();
+    drop(w);
+    assert!(cleanup_started.elapsed() < std::time::Duration::from_secs(10));
+    record(
+        "browser-https-sbf-journey",
+        json!({"result":"passed","offlineOnly":true,"browser":"Chromium with isolated trusted test TLS","realHttps":true,"sigverify":true,"milestone":s.milestone.to_string(),"studentRewardRaw":REWARD,"completion":s.completion.to_string(),"vaultClosed":true,"simulatedBoundaries":["Phantom provider","read-only RPC backed by LiteSVM snapshot","GitHub HTTP and runner outcomes","test-only transaction dispatch to LiteSVM"]}),
+    );
 }

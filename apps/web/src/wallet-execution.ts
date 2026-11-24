@@ -18,25 +18,27 @@ export class WalletApprovalFlow {
   private readonly review:ReviewedMessage;
   private readonly ports:WalletPorts;
   private readonly now:()=>number;
-  constructor(review:ReviewedMessage,ports:WalletPorts,now=()=>Date.now()){this.review=review;this.ports=ports;this.now=now;}
+  private readonly changed:(stage:WalletStage)=>void;
+  constructor(review:ReviewedMessage,ports:WalletPorts,now=()=>Date.now(),changed:(stage:WalletStage)=>void=()=>{}){this.review=review;this.ports=ports;this.now=now;this.changed=changed;}
+  private transition(stage:WalletStage){this.stage=stage;this.changed(stage);}
   private fresh(){if(this.ports.mode!=="offline-test-only")throw new Error("live_execution_disabled");
     if(this.ports.wallet()!==this.review.wallet)throw new Error("wallet_changed");
     if(!Number.isFinite(Date.parse(this.review.expiresAt)) || this.now()>=Date.parse(this.review.expiresAt))throw new Error("review_expired");}
   /** Separate explicit action. A failed/rejected attempt is consumed; obtain fresh review manually. */
-  async approve(){if(this.stage!=="ready_for_review")throw new Error("attempt_consumed");this.stage="awaiting_wallet_approval";
+  async approve(){if(this.stage!=="ready_for_review")throw new Error("attempt_consumed");this.transition("awaiting_wallet_approval");
     try{this.fresh();await this.ports.revalidate();this.fresh();const wire=await this.ports.sign();this.fresh();
       if(!(wire instanceof Uint8Array)||wire.length>1232)throw new Error("invalid_wire");const copy=Uint8Array.from(wire);
-      this.signature=await this.ports.validate(Uint8Array.from(copy));this.#wire=copy;this.stage="signed_awaiting_broadcast";
-    }catch{this.#wire=null;this.signature=null;this.stage="failed";}}
+      const signature=await this.ports.validate(Uint8Array.from(copy));this.fresh();this.signature=signature;this.#wire=copy;this.transition("signed_awaiting_broadcast");
+    }catch{this.#wire=null;this.signature=null;this.transition("failed");}}
   /** Separate explicit action; all uncertain sends are terminal unknown, with no automatic retry. */
   async broadcast(){if(this.stage!=="signed_awaiting_broadcast"||!this.#wire||!this.signature||this.#broadcastStarted)throw new Error("not_signed");
     this.#broadcastStarted=true;
-    try{this.fresh();await this.ports.revalidate();this.fresh();if(await this.ports.validate(Uint8Array.from(this.#wire))!==this.signature)throw new Error("wire_changed");}
-    catch{this.stage="failed";this.#wire=null;return;}
-    this.stage="submitted";
+    try{this.fresh();await this.ports.revalidate();this.fresh();if(await this.ports.validate(Uint8Array.from(this.#wire))!==this.signature)throw new Error("wire_changed");this.fresh();}
+    catch{this.transition("failed");this.#wire=null;return;}
+    this.transition("submitted");
     try{const signature=await this.ports.broadcast(Uint8Array.from(this.#wire));if(signature!==this.signature)throw new Error("signature_mismatch");
-      this.stage="confirming";this.stage=await this.ports.confirm(Uint8Array.from(this.#wire),signature);
-    }catch{this.stage="unknown";}finally{this.#wire=null;}}
+      this.transition("confirming");this.transition(await this.ports.confirm(Uint8Array.from(this.#wire),signature));
+    }catch{this.transition("unknown");}finally{this.#wire=null;}}
 }
 /** Real traditional Phantom adapter, intentionally unreachable until a separately reviewed code change. */
 export async function requestPhantomTransaction(wallet:{publicKey:{toBase58():string}|null;request?:(r:object)=>Promise<unknown>},review:ReviewedMessage):Promise<Uint8Array>{

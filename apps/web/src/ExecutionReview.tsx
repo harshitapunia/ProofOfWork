@@ -19,12 +19,12 @@ export function ExecutionReview({workflow,operations,wallet,onExpired}:{workflow
      sign:()=>requestPhantomTransaction(getWallet(),reviewed),
      validate:async wire=>(await request<{signature:string}>("/api/v1/workflow/validate","wallet_execution_signature",{...ENVELOPE,reviewId:reviewed.reviewId,wireBase64:encode(wire)})).data.signature,
      broadcast:async wire=>{await request("/api/v1/workflow/broadcast","never_allowed",{...ENVELOPE,reviewId:reviewed.reviewId,wireBase64:encode(wire)});throw new Error("live_execution_disabled");},
-     confirm:async(wire,signature)=>{setStage("confirming");const c=await request<{state:"confirmed"|"failed"|"unknown";signature:string}>("/api/v1/workflow/confirm","wallet_execution_confirmation",{...ENVELOPE,reviewId:reviewed.reviewId,wireBase64:encode(wire)});if(c.data.signature!==signature)throw new Error("signature_mismatch");return c.data.state;}});setStage("ready_for_review");
+     confirm:async(wire,signature)=>{setStage("confirming");const c=await request<{state:"confirmed"|"failed"|"unknown";signature:string}>("/api/v1/workflow/confirm","wallet_execution_confirmation",{...ENVELOPE,reviewId:reviewed.reviewId,wireBase64:encode(wire)});if(c.data.signature!==signature)throw new Error("signature_mismatch");return c.data.state;}},()=>Date.now(),s=>{if(generation.current===n)setStage(s);});setStage("ready_for_review");
    }
   }catch(e){if(generation.current===n){if(e instanceof ApiError&&e.status===401)onExpired();else setError(e instanceof ApiError&&e.code==="wallet_review_unavailable"?"Devnet review is unavailable. Enable the existing APP_CHAIN_READS=devnet configuration and build the pinned SBF artifact; signing stays disabled.":message(e));}}
   finally{if(generation.current===n)setBusy(false);}}
- async function approve(){if(!flow.current)return;setStage("awaiting_wallet_approval");await flow.current.approve();setStage(flow.current.stage);}
- async function broadcast(){if(!flow.current)return;setStage("submitted");await flow.current.broadcast();setStage(flow.current.stage);}
+ async function approve(){if(!flow.current)return;await flow.current.approve();}
+ async function broadcast(){if(!flow.current)return;await flow.current.broadcast();}
  return <section aria-label="Wallet execution review"><h3>Review fresh Devnet state</h3>
   <p>Each action is reviewed separately against current program, mint, accounts, deadlines, balances, fees and rent. Prepared proposal JSON is not authority.</p>
   <div className="actions">{operations.map(operation=><button type="button" key={operation} disabled={busy} onClick={()=>void inspect(operation)}>{operation.replaceAll("_"," ")} — review</button>)}</div>
@@ -34,6 +34,7 @@ export function ExecutionReview({workflow,operations,wallet,onExpired}:{workflow
    {review.deployment&&<p>Program exists: {String(review.deployment.programExists)}. Executable: {String(review.deployment.executable)}. Artifact comparison: {review.deployment.artifactEquality.replaceAll("_"," ")}. DEMO mint exists: {String(review.deployment.mint.exists)}; decimals: {review.deployment.mint.decimals??"unknown"}; raw supply: {review.deployment.mint.supplyRaw??"unknown"}.</p>}
    {review.messageBase64&&<label>Reviewed unsigned transaction message<textarea readOnly value={review.messageBase64}/></label>}
    <p>Fee: {review.feeLamports??"Not established"} lamports. Rent: {review.rentLamports??"Not established"} lamports. Reward payment not established.</p></div>}
+  <p>Prepared instructions require a separate fresh review for each operation. No creation or payment is confirmed by preparation.</p>
   <p>Wallet execution state: {stage.replaceAll("_"," ")}. No automatic retries are permitted.</p>
   <p>Live wallet signing and broadcasting require a separately authorized controlled Devnet rehearsal. No live authorization is enabled by this PR.</p>
   <div className="actions"><button disabled onClick={()=>void approve()}>Approve transaction in wallet — disabled</button><button disabled onClick={()=>void broadcast()}>Broadcast signed transaction — disabled</button></div>

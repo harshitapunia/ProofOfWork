@@ -1,3 +1,4 @@
+import { WorkflowStateReader } from "./workflow-state.js";
 import { WalletExecutionReviewer } from "./devnet-wallet-review.js";
 /** Deliberate loopback-only application CLI. The legacy verifier CLI remains unchanged. */
 import { readFile, lstat } from "node:fs/promises";
@@ -27,7 +28,7 @@ export async function startApplication(env: NodeJS.ProcessEnv = process.env) {
     const service = new VerifierService(new GitHub(), new DevnetReader(env.SOLANA_RPC_URL, env.VERIFIER_PUBLIC_KEY), new DockerRunner(env.TRUSTED_RUNNER_IMAGE));
     const server = await createApplicationServer({ cert, key }, {
       assetsDirectory: env.APP_WEB_DIST ?? fileURLToPath(new URL("../../../../apps/web/dist/", import.meta.url)), sessions, store, service,
-      ...(chainMode === "devnet" ? { walletReview: new WalletExecutionReviewer(), chain: { reader: new DevnetLifecycleReader("confirmed"), provenance: "unverified_devnet_rpc" as const } } : {}),
+      ...(chainMode === "devnet" ? { workflowState: new WorkflowStateReader(), walletReview: new WalletExecutionReviewer(), chain: { reader: new DevnetLifecycleReader("confirmed"), provenance: "unverified_devnet_rpc" as const } } : {}),
     });
     server.once("close", () => store.close());
     await new Promise<void>((resolve, reject) => {
