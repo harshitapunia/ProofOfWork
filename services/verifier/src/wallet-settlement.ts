@@ -1,5 +1,5 @@
 /** Settlement-specific preparation/effect checks for the existing wallet reviewer; never signs or sends. */
-import {PublicKey,Transaction} from "@solana/web3.js";
+import {PublicKey,Transaction,SystemProgram} from "@solana/web3.js";
 import {prepareSettlementTransaction,deriveStudentAta,deriveVault,deriveVaultAuthority,deriveCompletion,DEMO_MINT,DEMO_DECIMALS,SETTLEMENT_DEVNET_RPC,TOKEN_PROGRAM_ID} from "@proofwork/finance-client";
 import {WorkflowStateReader} from "./workflow-state.js";
 import type {ReadOnlyWalletRpc} from "./devnet-wallet-review.js";
@@ -23,6 +23,8 @@ export async function prepareReviewedSettlement(rpc:ReadOnlyWalletRpc,input:unkn
    return batch.values.map((a:any,i:number)=>{accounts.set(keys[i]!.toBase58(),a);if(a===null)return null;check(a&&Array.isArray(a.data)&&a.data[1]==="base64");const data=Buffer.from(a.data[0],"base64");check(data.toString("base64")===a.data[0]);return {...a,owner:new PublicKey(a.owner),data};});},
   getMinimumBalanceForRentExemption:(space:number)=>rpc.call("getMinimumBalanceForRentExemption",[space,{commitment:"confirmed"}])};
  const plan=await prepareSettlementTransaction({sponsor:scope.sponsor,student:state.student,caller:wallet,internshipId:BigInt(scope.internshipId),milestoneId:BigInt(scope.milestoneId),fallbackSeed:seed},connection);
+ const payer=accounts.get(wallet);
+ check(payer&&payer.owner===SystemProgram.programId.toBase58()&&payer.executable===false&&JSON.stringify(payer.data)==='["","base64"]');
  const dest=plan.sponsorDestination.toBase58(),vault=deriveVault(state.milestone)[0].toBase58(),completion=deriveCompletion(state.milestone)[0].toBase58();
  const token=(address:string)=>{const a=accounts.get(address);check(a?.owner===TOKEN_PROGRAM_ID);return Buffer.from(a.data[0],"base64").readBigUInt64LE(64);};
  const rentCompletion=lamports(await connection.getMinimumBalanceForRentExemption(249)),rentToken=lamports(await connection.getMinimumBalanceForRentExemption(165));

@@ -193,3 +193,14 @@ test("settlement accounts for unsolicited vault rent donation using the correlat
  const vault=keys.indexOf(f.vault),sponsor=keys.indexOf(f.terms.sponsor),before=x.meta.preBalances[vault]!;
  x.meta.preBalances[vault]!+=9;x.meta.postBalances[sponsor]!+=9;const result=await x.confirm();assert.equal(result.state,"confirmed");assert.equal(result.settlement?.rentReturnedRaw,String(before+9));
 });
+
+test("settlement retains the existing plain system fee-payer account requirement",async t=>{
+ for(const fault of ["owner","executable","data","missing"]){
+  const f=settlementFixture(t),wallet=f.wallet.publicKey.toBase58(),a=f.accounts.get(wallet);
+  if(fault==="owner")a.owner=TOKEN_PROGRAM_ID;
+  if(fault==="executable")a.executable=true;
+  if(fault==="data")a.data=[Buffer.from([1]).toString("base64"),"base64"];
+  if(fault==="missing")f.accounts.set(wallet,null);
+  const review=await f.reviewer.review(f.input,wallet);assert.equal(review.state,"blocked");assert.equal(review.messageBase64,null);assert(!f.calls.some(method=>method.startsWith("send")));
+ }
+});
