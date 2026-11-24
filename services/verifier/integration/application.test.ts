@@ -1,3 +1,4 @@
+import {WorkflowStateReader} from "../src/workflow-state.js";
 import {WalletExecutionReviewer,ReadOnlyWalletRpc} from "../src/devnet-wallet-review.js";
 import { manifest as workflowManifest } from "../test/helpers.js";
 import { evidenceHash as workflowEvidenceHash } from "../src/commitments.js";
@@ -45,7 +46,7 @@ async function freePort() {
   const port = (s.address() as import("node:net").AddressInfo).port;
   await new Promise<void>(resolve => s.close(() => resolve())); return port;
 }
-async function fixture(t: TestContext, mode: "fixture" | "disabled" | "missing" = "fixture", walletReview?: WalletExecutionReviewer) {
+async function fixture(t: TestContext, mode: "fixture" | "disabled" | "missing" = "fixture", walletReview?: WalletExecutionReviewer, stateReader?:WorkflowStateReader) {
   const tls = await (tlsPromise ??= certificate()), sponsor = pair(), student = pair(), other = pair();
   const dir = mkdtempSync(join(tmpdir(), "proofwork-https-"));
   const ledger = walletLedgerFixture(dir, sponsor.wallet, student.wallet, other.wallet);
@@ -60,7 +61,7 @@ async function fixture(t: TestContext, mode: "fixture" | "disabled" | "missing" 
   let server!: Awaited<ReturnType<typeof createApplicationServer>>, sessions!: WalletSessions, origin = "";
   for (let attempt = 0; attempt < 3; attempt++) {
     origin = "https://localhost:" + await freePort(); sessions = new WalletSessions({ origin, domain: new URL(origin).host, cluster: "devnet" }, () => now);
-    server = await createApplicationServer(tls, { assetsDirectory, sessions, store: ledger.s, ...(walletReview ? {walletReview} : {}),
+    server = await createApplicationServer(tls, { assetsDirectory, sessions, store: ledger.s, ...(walletReview ? {walletReview} : {}), workflowState:stateReader??new WorkflowStateReader(new ReadOnlyWalletRpc(async(_url,init)=>{const q=JSON.parse(String(init?.body)); return Response.json({jsonrpc:"2.0",id:q.id,result:q.method==="getGenesisHash"?SETTLEMENT_DEVNET_GENESIS:{context:{slot:200},value:q.params[0].map(()=>null)}});}),"offline_fixture"),
       service: { verify: async () => { legacyCalls++; return { legacy: true } as any; } }, ...(mode === "disabled" ? {} : { chain }) });
     try { await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(Number(new URL(origin).port), "127.0.0.1", () => { server.off("error", reject); resolve(); }); }); break; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE" || attempt === 2) { ledger.s.close(); throw error; } }
@@ -240,4 +241,24 @@ test("configured actual HTTPS review reports absent program without signing or s
  const f=await fixture(t,"fixture",reviewer);await f.login();const r=await f.send("/api/v1/workflow/review",{...envelope,operation:"create_internship",workflow:workflowInput(f)});
  assert.equal(r.status,200);assert.equal(r.body.data.state,"blocked");assert.deepEqual(r.body.data.blockers,["missing_program"]);assert.equal(r.body.data.deployment.mint.decimals,6);
  assert.equal(r.body.data.liveExecution,false);assert.equal(r.body.data.messageBase64,null);assert.deepEqual(calls,["getGenesisHash","getMultipleAccounts"]);
+});
+
+test("actual HTTPS scope observation preserves session/origin/method guards and creates no jobs",async t=>{
+ const f=await fixture(t),before=f.base.snapshot(),input={...envelope,sponsor:f.sponsor.wallet,internshipId:"9",milestoneId:"1"},path="/api/v1/workflow/state";
+ assert.equal((await f.send(path,input)).status,401);await f.login();
+ const r=await f.send(path,input);assert.equal(r.status,200);assert.equal(r.body.data.kind,"workflow_state");assert.equal(r.body.data.milestoneExists,false);assert.equal(r.body.provenance,"offline_fixture");
+ assert.equal((await f.send(path,input,{noOrigin:true})).status,400);assert.equal((await f.send(path)).status,405);
+ assert.equal((await f.send(path,{...input,success:true})).status,400);
+ assert.equal((await f.send("/api/v1/workflow/verification",{...input,evidence:{}})).status,409);
+ f.advance(SESSION_LIFETIME_MS);assert.equal((await f.send(path,input)).status,401);assert.deepEqual(f.base.snapshot(),before);assert.equal(f.legacyCalls(),0);
+});
+
+test("workflow observation rechecks session after an awaited real HTTPS read",async t=>{
+ let release!:()=>void,seen!:()=>void;const gate=new Promise<void>(r=>{release=r;}),started=new Promise<void>(r=>{seen=r;});
+ const reader=new WorkflowStateReader(new ReadOnlyWalletRpc(async(_url,init)=>{const q=JSON.parse(String(init?.body));if(q.method==="getMultipleAccounts"){seen();await gate;}
+  return Response.json({jsonrpc:"2.0",id:q.id,result:q.method==="getGenesisHash"?SETTLEMENT_DEVNET_GENESIS:{context:{slot:200},value:q.params[0].map(()=>null)}});
+ }),"offline_fixture");
+ const f=await fixture(t,"fixture",undefined,reader);await f.login();
+ const pending=f.send("/api/v1/workflow/state",{...envelope,sponsor:f.sponsor.wallet,internshipId:"9",milestoneId:"1"});
+ await started;f.advance(SESSION_LIFETIME_MS);release();const response=await pending;assert.equal(response.status,401);assert.equal(response.body.data,null);
 });

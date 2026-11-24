@@ -314,3 +314,32 @@ test("fresh Devnet review exposes missing deployment and cannot invoke wallet or
  await expect(page.getByText("Program exists: false.",{exact:false})).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
+
+// UI-only transport fixtures. The runtime browser case separately uses actual HTTPS and SBF snapshots.
+function workflowObservation(status:string,student=WALLET){return {kind:"workflow_state",internship:"fixture-internship",milestone:"fixture-milestone",internshipExists:true,milestoneExists:true,
+ status,student,verifier:"fixture-verifier",requirementsHash:"ab".repeat(32),rewardAmountRaw:"1000000",assignBy:"1800000100",submitBy:"1800000200",evidenceHash:status==="Submitted"?"cd".repeat(32):null,
+ verifiedAt:null,completion:null,settledAt:null,vaultAmountRaw:"1000000",vaultClosed:false,slot:200,commitment:"confirmed",provenance:"offline_fixture",persisted:false,rewardPayment:"not_established"};}
+test("scope refresh renders labeled observations and edits clear stale status",async({page})=>{
+ await browserFixture(page);await signIn(page);await page.getByRole("link",{name:"Organization workspace",exact:true}).click();
+ const scope=page.getByRole("region",{name:"Observed workflow state",exact:true});
+ await page.route(ORIGIN+"/api/v1/workflow/state",async route=>{expect(route.request().method()).toBe("POST");expect(route.request().postDataJSON()).toEqual({apiVersion:VERSION,cluster:"devnet",sponsor:WALLET,internshipId:"9",milestoneId:"1"});await route.fulfill({json:reply(workflowObservation("Created"),"offline_fixture")});});
+ await scope.getByLabel("Internship ID to inspect",{exact:true}).fill("9");await scope.getByLabel("Milestone ID to inspect",{exact:true}).fill("1");
+ await scope.getByRole("button",{name:"Refresh chain observation",exact:true}).click();await expect(scope.getByRole("heading",{name:"Created",exact:true})).toBeVisible();
+ await expect(scope).toContainText("offline fixture");await expect(scope).toContainText("Reward payment remains not established");
+ await scope.getByLabel("Milestone ID to inspect",{exact:true}).fill("2");await expect(scope.getByRole("heading",{name:"Created",exact:true})).toHaveCount(0);
+ await expect(page.getByRole("button",{name:"Sign & broadcast unavailable",exact:true})).toBeDisabled();
+});
+test("private verifier handoff requires observed Submitted state and expiry clears it",async({page})=>{
+ await browserFixture(page);await signIn(page);const scope=page.getByRole("region",{name:"Observed workflow state",exact:true});
+ const handoff=scope.getByRole("button",{name:"Validate private verifier handoff",exact:true});await expect(handoff).toBeDisabled();
+ let status="Assigned",expired=false;
+ await page.route(ORIGIN+"/api/v1/workflow/state",route=>expired?route.fulfill({status:401,json:reply(null,"none","authentication_required")}):route.fulfill({json:reply(workflowObservation(status),"offline_fixture")}));
+ await scope.getByLabel("Recorded sponsor wallet",{exact:true}).fill("fixture-sponsor");await scope.getByLabel("Internship ID to inspect",{exact:true}).fill("9");await scope.getByLabel("Milestone ID to inspect",{exact:true}).fill("1");
+ await scope.getByRole("button",{name:"Refresh chain observation",exact:true}).click();await expect(scope.getByRole("heading",{name:"Assigned",exact:true})).toBeVisible();await expect(handoff).toBeDisabled();
+ status="Submitted";await scope.getByRole("button",{name:"Refresh chain observation",exact:true}).click();await expect(handoff).toBeEnabled();
+ await scope.getByLabel("Verification evidence request JSON (private)",{exact:true}).fill("{}");
+ await page.route(ORIGIN+"/api/v1/workflow/verification",route=>route.fulfill({json:reply({kind:"verification_handoff",request:{fixture:"private test request"},dispatch:"unavailable",authorization:"not_granted",persisted:false,rewardPayment:"not_established"},"offline_fixture")}));
+ await handoff.click();await expect(scope).toContainText("No verification or attestation succeeded");
+ expired=true;await scope.getByRole("button",{name:"Refresh chain observation",exact:true}).click();await expect(page.getByText("Your session expired. Sign in again to prepare instructions.",{exact:true})).toBeVisible();
+ await expect(page.getByLabel("Verification evidence request JSON (private)",{exact:true})).toHaveCount(0);
+});

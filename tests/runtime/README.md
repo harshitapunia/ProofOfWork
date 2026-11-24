@@ -37,7 +37,7 @@ explicit pin change; never disable the guard.
 
 23 core tests cover settlement, refunds, lifecycle, local signed history and
 failed transfer/closure/completion atomicity. Financial core fixtures use
-placeholder signatures. The 49 bridge tests use real TypeScript-generated
+placeholder signatures. The 50 bridge tests use real TypeScript-generated
 wire bytes and signed settlement/attack transactions; two cases are client
 preflight rejection only. Lifecycle setup uses placeholder signatures.
 Synthetic overflow/shortfall/completion prestates are labelled in source;
@@ -99,13 +99,13 @@ run results must be checked; local historical results are not GitHub CI evidence
 
 ## Lifecycle client extension
 
-The 49 bridge cases include the original 26 settlement/attack cases and 20 new
-assignment/submission/refund cases. They call the actual finance-client builders,
+The 50 bridge cases comprise 26 settlement/attack cases, 20 lifecycle cases,
+three complete verifier journeys and one browser/HTTPS/SBF journey. They call the actual finance-client builders,
 then sign exact bytes with disposable in-memory identities. Creation/funding and
 optional assignment setup are labeled trusted fixtures; targeted lifecycle
 operations are never reconstructed as Rust instructions. Existing two preflight-
 only cases remain. Synthetic Token/lamport overflow tests are fault injection,
-not economically reachable supply claims. The CI guard requires all 49 bridge
+not economically reachable supply claims. The CI guard requires all 50 bridge
 tests in addition to the unchanged 23 core tests.
 
 
@@ -124,7 +124,7 @@ commitment, exact student reward, sponsor surplus, vault closure/rent return,
 completion provenance and replay rejection. Failed GitHub identity, runner
 outcomes and evidence commitments emit no attestation wire and cannot pay.
 The original 23 core and 46 bridge cases are retained; the CI guard now requires
-at least 72 total runtime cases, without failed/ignored/filtered cases.
+at least 73 total runtime cases, without failed/ignored/filtered cases.
 
 This is offline integration, not real GitHub acceptance execution or a browser
 wallet demonstration. GitHub HTTP responses and runner outcomes reuse explicit
@@ -135,8 +135,37 @@ before executing tests and hashes the consumed verifier source/compiled modules
 and fixture inputs into fresh provenance. Do not run package installs concurrently
 with other suites consuming those same node_modules directories.
 
-The browser suites separately exercise form/adapter behavior; actual HTTPS tests
-exercise real handlers and cryptographic login. These are complementary slices,
-not a single browser-to-LiteSVM or live Devnet proof. See the
+The standalone browser and HTTPS suites exercise form/adapter behavior, real
+handlers and cryptographic login. The additional case below connects these
+components to LiteSVM. Real Phantom and live Devnet remain untested here. See the
 [controlled live rehearsal plan](../../docs/LIVE_DEVNET_REHEARSAL.md) for remaining
 operational gates. Signing and broadcasting remain disabled.
+
+
+## Actual browser-to-HTTPS-to-SBF application case
+
+One additional bridge case runs Chromium against the actual HTTPS application
+and built frontend. It authenticates sponsor/student with disposable Ed25519
+provider doubles, checks secure cookies, prepares organization/submission plans
+through the real UI/HTTP handlers and executes their exact client wire in LiteSVM.
+After each effect the browser refreshes the production scope query against the
+actual VM account snapshot. The private handoff returned by real HTTPS is passed
+to the existing verifier/authorizer; failed verification cannot attest or pay.
+The test checks attestation, exact reward, completion, rent return, vault closure
+and frontend Submitted/Verified/Settled observations without claiming payment
+from status alone. All original cases remain: 23 core plus 50 bridge, minimum 73.
+
+Simulated boundaries are explicit: Phantom/provider, RPC transport backed by VM
+snapshots, GitHub HTTP/runner outcomes and test-only dispatch of signed wire to
+LiteSVM. No production transaction button is enabled. This is genuine browser and
+HTTPS execution, not a real Phantom or live Devnet rehearsal.
+
+Linux requires the existing Playwright Chromium installation, its OS libraries,
+OpenSSL/Bash and `libnss3-tools` (`certutil`). The existing runtime CI job installs
+these prerequisites without adding permissions/jobs. The test uses disposable
+in-memory TLS keys, sends the key through an anonymous pipe and trusts only its
+public test certificate in a temporary Chromium HOME/NSS profile. It never
+changes system or user certificate trust or bypasses HTTPS validation. Test
+SQLite/profile files are isolated and cleaned up; no operational wallet or
+application database is loaded. See Chromium's official
+[Linux certificate management](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/linux/cert_management.md).

@@ -1,3 +1,4 @@
+import type { WorkflowState, VerificationHandoff } from "./workflow-state.js";
 import type { WalletReview, WalletConfirmation } from "./devnet-wallet-review.js";
 import type { WorkflowPreparation } from "./workflow-preparation.js";
 import { randomUUID } from "node:crypto";
@@ -51,7 +52,7 @@ export interface WalletSessionView {
   readonly cluster: "devnet"; readonly authenticatedAt: string; readonly expiresAt: string;
 }
 export interface WalletLogoutView { readonly kind: "wallet_logout"; readonly revoked: true }
-export type ApplicationView = {kind:"wallet_execution_signature";signature:string;liveExecution:false} | WalletReview | WalletConfirmation | {kind:"wallet_execution_revalidation";liveExecution:false;state:"ready_for_review"} | WorkflowPreparation | WalletChallengeView | WalletSessionView | WalletLogoutView | VerificationJobView | ExecutionStatusView | MilestoneStateView | HealthView;
+export type ApplicationView = WorkflowState | VerificationHandoff | {kind:"wallet_execution_signature";signature:string;liveExecution:false} | WalletReview | WalletConfirmation | {kind:"wallet_execution_revalidation";liveExecution:false;state:"ready_for_review"} | WorkflowPreparation | WalletChallengeView | WalletSessionView | WalletLogoutView | VerificationJobView | ExecutionStatusView | MilestoneStateView | HealthView;
 export interface ApiReply<T extends ApplicationView = ApplicationView> {
   readonly statusCode: number;
   readonly body: Readonly<{ apiVersion: typeof APPLICATION_API_VERSION; requestId: string; cluster: "devnet";

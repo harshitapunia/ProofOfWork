@@ -156,3 +156,55 @@ Signed-wire validation requires the exact reviewed message, sole required signer
 **Observed read-only audit, 2026-11-19:** the official Devnet RPC reported the expected genesis and the configured program account absent. Deployment, executable bytecode equality and upgrade authority therefore remain **not established**. The approved DEMO mint existed under classic SPL, decimals 6, approved authority, no freeze authority and raw supply 0. Its authority's derived canonical DEMO ATA was absent. A separate largest-token-account request failed; no complete token-account inventory is claimed. Public raw observations are retained outside Git; no deployment, signing, broadcast, token movement or minting occurred.
 
 A controlled live follow-up requires explicit authorization, verified deployment of the reviewed artifact, recorded deployment/upgrade policy, actual sponsor/student wallets and consent, existing correctly owned DEMO ATA/token balances and rent, approved reserved IDs and manifests, and a separately reviewed change enabling wallet approval plus a fixed-Devnet transport with preflight/maxRetries:0. No environment/browser flag in this PR enables it. Independent GitHub authentication, exact confirmed evidence bindings, trusted pinned isolated runner and designated verifier authorization are still required after submission. Browser cookies never replace those controls; verifier keys stay out of the browser. Attestation and settlement execution remain inactive and require their own approved signer/transport/reconciliation path.
+
+
+## Browser workflow observations and private verification handoff
+
+In authenticated Backend API mode, organization and student workspaces now
+include **Read the actual milestone**. Enter the recorded sponsor and explicit
+internship/milestone IDs, or prepare a proposal to populate these fields. Refresh
+queries canonical accounts through the existing fixed-Devnet read-only RPC and
+existing lifecycle decoders. Actual sponsor/student bindings authorize reads;
+imported JSON and the selected workspace do not establish assignment or authority.
+Absence/collision results are slot-specific observations, not ID reservations.
+Continue coordinating increasing IDs before creation. No public allocation or
+listing endpoint is introduced.
+
+`POST /api/v1/workflow/state` takes exactly
+`{apiVersion,cluster,sponsor,internshipId,milestoneId}`. It shares the existing
+HTTPS/Host/Origin, session, body/capacity and post-await expiry checks. It reports
+Created/Funded/Assigned/Submitted/Verified/Settled/Refunded snapshots, commitments,
+raw escrow backing and completion/vault observations. `APP_CHAIN_READS=devnet`
+opts into the reader; otherwise it fails unavailable. Production provenance is
+`unverified_devnet_rpc`, with `persisted:false` and `rewardPayment:not_established`.
+A confirmed RPC context is not transaction correlation, independent chain proof,
+a successful GitHub verification or proof of exact student payment. Prefunded
+empty system accounts do not count as initialized submissions/completions.
+
+For students, the existing preparation fills a **private** verifier request from
+the same manifest/evidence preimage. Alternatively paste a privately retained
+request after refresh. **Validate private verifier handoff** is enabled only for
+a currently observed Submitted milestone recorded for that wallet. The server
+freshly validates the student, manifest and evidence commitments through
+`POST /api/v1/workflow/verification`, taking the state target plus `evidence` in
+the existing verifier `Request` format. The response explicitly reports dispatch
+unavailable, authorization not granted and no persistence. Never publish this
+request: it contains the evidence nonce. No GitHub token belongs in these forms;
+unknown credential fields are rejected. The existing `/verify` retains its
+independent GitHub authentication, origin rejection, state rechecks and isolated
+runner requirements. Wallet login grants no permission to dispatch it.
+
+Transaction review continues to use the existing builders/reviewer/controller.
+The UI observes actual controller stages; it does not optimistically label a
+preflight as Submitted. Wallet ownership and review expiry are checked again
+after awaited signed-wire validation. Production wallet signing and broadcasting
+remain hard-disabled, including the backend broadcast denial. Offline doubles
+are test-only; no runtime/browser flag activates production execution.
+
+Scope snapshots are transient reads, not a second state machine/database or a
+successful job writer. Durable operational ingestion remains blocked on approval
+of the trusted ingestion actor, transaction/account evidence and finality policy,
+retention/privacy and recovery rules, plus any necessary reviewed schema change.
+Trusted verifier dispatch still needs approved credential custody and caller
+admission distinct from the wallet session. Those specific paths are not enabled
+by this integration; no unsigned proposal creates a successful lifecycle job.

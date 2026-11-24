@@ -1,3 +1,4 @@
+import { WorkflowStatus } from "./WorkflowStatus";
 import { ExecutionReview } from "./ExecutionReview";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ENVELOPE, ApiError, message, request, type Session } from "./api";
@@ -108,6 +109,7 @@ export function Workflow({ session, role, onExpired }: { session: Session; role:
       <p>Refresh blockhash, inspect accounts and obtain separate explicit wallet authorization before any future execution. This app does not request it.</p>
       <p><strong>Verification not run. Reward payment not established.</strong></p>
     </div>}
+    <WorkflowStatus session={session} role={role} prepared={result} workflow={submittedWorkflow} onExpired={onExpired}/>
     <div className="actions"><button disabled title="No reviewed wallet transaction execution path is enabled.">Sign & broadcast unavailable</button><button disabled title="Separate GitHub authentication, confirmed account bindings and trusted isolated runner required.">Run GitHub verification unavailable</button></div>
   </section>;
 }

@@ -119,3 +119,13 @@ and a human approves any necessary new action. Do not loosen financial policy.
 Only call the project **LIVE DEMO VERIFIED** after all sixteen stages succeed
 with genuine Devnet evidence and the complete browser journey is observed.
 The stabilization PR neither grants those approvals nor claims that result.
+
+
+## Browser integration follow-up
+
+The application now provides session-authorized scope observations without a job
+ID, explicit ID collision/absence checks and a private, commitment-checked
+verifier-request handoff. These are transient reads/preparations. They do not
+remove the durable ingestion, trusted verifier dispatch or live execution gates
+above. Offline Chromium/real-HTTPS/LiteSVM integration is not a live rehearsal;
+the sixteen-stage completion and separate action-approval requirements remain.

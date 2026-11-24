@@ -1,7 +1,7 @@
 import { spawnSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { readFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -35,6 +35,9 @@ function run(command, args, cwd = root) {
 }
 run("npm", ["ci", "--ignore-scripts"], path.join(root, "packages/finance-client"));
 run("npm", ["run", "build"], path.join(root, "packages/finance-client"));
+// Browser integration uses the existing frontend and Chromium dependency, never a production enable flag.
+run("npm", ["ci", "--ignore-scripts"], path.join(root, "apps/web"));
+run("npm", ["run", "build"], path.join(root, "apps/web"));
 // The complete journey reuses the real workflow/verifier/authorizer modules with offline adapters.
 for (const directory of ["services/lifecycle", "services/verifier"]) {
   run("npm", ["ci", "--ignore-scripts"], path.join(root, directory));
@@ -45,12 +48,22 @@ mkdirSync(evidenceRoot, { recursive: true });
 const evidence = mkdtempSync(path.join(evidenceRoot, "run-"));
 env.PROOFWORK_BRIDGE_EVIDENCE_DIR = evidence;
 console.log("Runtime evidence: " + path.relative(root, evidence));
+const consumedModules = ["apps/web/src", "services/verifier/src", "services/verifier/dist/src", "services/lifecycle/src", "services/lifecycle/dist/src"]
+  .flatMap(directory => readdirSync(path.join(root, directory)).filter(name => /\.(?:ts|tsx|js|css)$/.test(name)).sort().map(name => `${directory}/${name}`));
 const inputs = [
+  ...consumedModules, "services/lifecycle/package.json", "services/lifecycle/package-lock.json",
   "packages/finance-client/src/index.ts",
   "packages/finance-client/dist/src/index.js",
   "packages/finance-client/package.json",
   "packages/finance-client/package-lock.json",
   "tests/runtime/Cargo.toml", "tests/runtime/Cargo.lock",
+  "tests/runtime/client/browser.mjs", "apps/web/package.json", "apps/web/package-lock.json",
+  ...["App", "Workflow", "WorkflowStatus", "ExecutionReview", "api", "routes", "wallet-execution"].map(name => `apps/web/src/${name}.${["api","routes","wallet-execution"].includes(name)?"ts":"tsx"}`),
+  "apps/web/dist/index.html", "apps/web/dist/mark.svg",
+  "apps/web/dist/assets/app.js", "apps/web/dist/assets/app.css",
+  "services/verifier/src/workflow-state.ts", "services/verifier/dist/src/workflow-state.js",
+  "services/verifier/src/application.ts", "services/verifier/src/wallet-application-http.ts",
+  "services/verifier/dist/src/application.js", "services/verifier/dist/src/wallet-application-http.js",
   "tests/runtime/client/journey.mjs",
   ...["workflow-preparation", "service", "github", "chain", "attestation-chain", "attestation", "commitments", "manifest", "http", "errors", "runner", "sum-v2"].flatMap(name => [
     `services/verifier/src/${name}.ts`, `services/verifier/dist/src/${name}.js`,

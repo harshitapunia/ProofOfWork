@@ -16,6 +16,7 @@ for await(const line of readline.createInterface({input:process.stdin})){
  try{
   const q=JSON.parse(line);
   if(q.op==="init"){console.log(JSON.stringify({ok:true,pub}));continue;}
+  if(q.op?.startsWith("browser-")){const b=await import("./browser.mjs");console.log(JSON.stringify(await b.handle(q,pub,(wallet,bytes)=>{const secret=keys.get(wallet);if(!secret)throw Error("unknown_test_wallet");return crypto.sign(null,bytes,secret);})));if(q.op==="browser-stop"&&q.shutdown===true)break;continue;}
   if(q.op==="journey-plan"){const j=await import("./journey.mjs");console.log(JSON.stringify(j.plan(pub)));continue;}
   let tx,selection=null,expectedSigner=pub.caller;
   if(q.op==="journey"){

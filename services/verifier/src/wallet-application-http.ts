@@ -1,3 +1,4 @@
+import type { WorkflowStateReader } from "./workflow-state.js";
 import { WalletExecutionReviewer } from "./devnet-wallet-review.js";
 import { prepareWorkflow } from "./workflow-preparation.js";
 /** Explicit composition only. The existing CLI/default server never constructs this service. */
@@ -9,8 +10,8 @@ import { WalletSessions, WalletAuthError, sessionCookie, readSessionCookie, chal
 const PREFIX = "/api/v1/";
 export class WalletApplicationHttp {
   #active = 0;
-  readonly #services: Readonly<{ store: LifecycleStore; timeoutMs: number; chain?: ApplicationChainSource; walletReview?: WalletExecutionReviewer }> | undefined;
-  constructor(readonly sessions: WalletSessions, services?: { store: LifecycleStore; timeoutMs: number; chain?: ApplicationChainSource; walletReview?: WalletExecutionReviewer }) {
+  readonly #services: Readonly<{ store: LifecycleStore; timeoutMs: number; chain?: ApplicationChainSource; workflowState?: WorkflowStateReader; walletReview?: WalletExecutionReviewer }> | undefined;
+  constructor(readonly sessions: WalletSessions, services?: { store: LifecycleStore; timeoutMs: number; chain?: ApplicationChainSource; workflowState?: WorkflowStateReader; walletReview?: WalletExecutionReviewer }) {
     if (!(sessions instanceof WalletSessions)) throw new WalletAuthError("invalid_auth_configuration", 503);
     if (services) {
       // Reuse query configuration validation, but do not install an authentication bypass.
@@ -49,7 +50,8 @@ export class WalletApplicationHttp {
     }
     const match = /^\/api\/v1\/jobs\/([^/?]+)(?:\/(milestone|execution))?$/.exec(path);
     const walletAction = ["review", "revalidate", "validate", "confirm", "broadcast"].find(action => path === PREFIX + "workflow/" + action);
-    const preparation = path === PREFIX + "workflow/prepare" || walletAction !== undefined;
+    const observation = ["workflow/state", "workflow/verification"].find(action => path === PREFIX + action);
+    const preparation = path === PREFIX + "workflow/prepare" || walletAction !== undefined || observation !== undefined;
     const auth = [PREFIX + "auth/challenge", PREFIX + "auth/verify", PREFIX + "auth/logout"].includes(path);
     if (!auth && !match && !preparation) return false;
     let resource: ApplicationResource | "authentication" | "unknown" = auth ? "authentication" : "unknown", id: string | null = null;
@@ -75,7 +77,13 @@ export class WalletApplicationHttp {
         const input = await this.body(request);
         // Recheck after potentially slow body delivery; a revoked/expired cookie cannot prepare a plan.
         if (this.sessions.resolve(token)?.sessionId !== session.sessionId) throw new WalletAuthError("authentication_required", 401);
-        if (walletAction) {
+        if (observation) {
+          const reader=this.#services?.workflowState;
+          if(!reader)throw new WalletAuthError("chain_reader_unavailable",503);
+          const data=observation==="workflow/state"?await reader.read(input,session.wallet):await reader.handoff(input,session.wallet);
+          if(this.sessions.resolve(token)?.sessionId!==session.sessionId)throw new WalletAuthError("authentication_required",401);
+          this.reply(response,applicationReply(applicationRequestId(),"unknown",null,200,data,reader.provenance));
+        } else if (walletAction) {
           const reviewer = this.#services?.walletReview;
           if (!reviewer) throw new WalletAuthError("wallet_review_unavailable", 503);
           const value = input as any;
