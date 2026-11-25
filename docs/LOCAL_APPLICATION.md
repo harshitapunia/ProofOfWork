@@ -136,14 +136,14 @@ The intended student signs in to the student workspace, imports that JSON and en
 
 Duplicate preparations are deterministic and have **no persistent effect**, not proof a duplicate on-chain submission is allowed. Existing on-chain init/status/deadline gates prohibit replay and the one submission cannot be replaced. The UI clears preparations when inputs, wallet, role, authentication or data-source context change. It stores no evidence, tokens or credentials in browser storage.
 
-**Disabled:** signing/broadcast, persistent listing/ID allocation, creating verification jobs, browser GitHub verification submission, attestation and settlement execution. No new private mutation endpoint or lifecycle state machine is introduced. Existing `/verify` still independently requires GitHub authentication, exact confirmed account commitments and its trusted isolated runner; wallet cookies cannot authorize it and it rejects browser Origin headers. Enabling a later operational journey needs separately approved signing/broadcast integration, validated deployed Devnet program/mint/account evidence, explicit transaction authorization, an approved durable ID/metadata/consent workflow, and independent GitHub/runner configuration. Existing settlement observations remain conditional and never prove payout by themselves.
+**Disabled in production:** signing/broadcast, persistent listing/ID allocation, verifier dispatch/job creation, attestation and settlement execution. The job-creating `POST /api/v1/workflow/dispatch` handler is implemented only for explicitly injected offline fixture composition; the production CLI does not compose its dispatcher and returns unavailable. No second lifecycle state machine is introduced. Existing `/verify` still independently requires GitHub authentication, exact confirmed account commitments and its trusted isolated runner; wallet cookies cannot authorize it and it rejects browser Origin headers. Enabling a later operational journey needs separately approved signing/broadcast integration, validated deployed Devnet program/mint/account evidence, explicit transaction authorization, an approved durable ID/metadata/consent workflow, and independent GitHub/runner configuration. Existing settlement observations remain conditional and never prove payout by themselves.
 
 
 ## Wallet execution review — live execution remains disabled
 
-After unsigned preparation, **Review fresh Devnet state** reviews exactly one existing finance-client instruction at a time. Keep the existing HTTPS setup; `APP_CHAIN_READS=devnet` opts into the read-only reviewer. First run the existing keyless pinned SBF build so the local artifact can be compared. No new RPC, mint, wallet, program ID or runtime enable secret is required or accepted. Missing configuration/artifact/deployment fails closed. To repeat the public read-only deployment audit explicitly, run `npm --prefix services/verifier run audit:devnet`. It never loads a wallet or sends transactions. The audit is not part of offline CI and is not run automatically on startup.
+After unsigned preparation, **Review fresh Devnet state** reviews one operation at a time using the existing finance client. Settlement may include atomic destination-provisioning instructions in the same reviewed transaction. Keep the existing HTTPS setup; `APP_CHAIN_READS=devnet` opts into the read-only reviewer. First run the existing keyless pinned SBF build so the local artifact can be compared. No new RPC, mint, wallet, program ID or runtime enable secret is required or accepted. Missing configuration/artifact/deployment fails closed. To repeat the public read-only deployment audit explicitly, run `npm --prefix services/verifier run audit:devnet`. It never loads a wallet or sends transactions. The audit is not part of offline CI and is not run automatically on startup.
 
-The new session-bound POST routes are `/api/v1/workflow/review` (`{apiVersion,cluster,operation,workflow}`), `/revalidate` under the same workflow prefix (`{apiVersion,cluster,reviewId}`), `/validate` and `/confirm` (`{apiVersion,cluster,reviewId,wireBase64}`). `workflow` is the existing complete preparation request, not caller-supplied instruction bytes. `operation` selects create_internship, create_milestone, fund_milestone, assign_student or submit_milestone. `/api/v1/workflow/broadcast` always returns `live_execution_disabled` without a sender or RPC call. All routes retain exact-origin, session, capacity and body checks. Session expiry is rechecked after RPC work. Review IDs are random, wallet-bound, bounded in-memory caches, not durable authorizations; signing reviews expire after 20 seconds and confirmation correlation is retained for at most ten minutes. Server restart or expired correlation requires reconciliation; it is not permission to retry.
+The new session-bound POST routes are `/api/v1/workflow/review` (`{apiVersion,cluster,operation,workflow}`), `/revalidate` under the same workflow prefix (`{apiVersion,cluster,reviewId}`), `/validate` and `/confirm` (`{apiVersion,cluster,reviewId,wireBase64}`). `workflow` is the existing complete preparation request for create_internship, create_milestone, fund_milestone, assign_student and submit_milestone. For settle_milestone it is the scope-only `{apiVersion,cluster,sponsor,internshipId,milestoneId}`; terms and destinations are freshly derived/validated from chain state. Neither format accepts caller-supplied instruction bytes. `/api/v1/workflow/broadcast` always returns `live_execution_disabled` without a sender or RPC call. All routes retain exact-origin, session, capacity and body checks. Session expiry is rechecked after RPC work. Review IDs are random, wallet-bound, bounded in-memory caches, not durable authorizations; signing reviews expire after 20 seconds and confirmation correlation is retained for at most ten minutes. Server restart or expired correlation requires reconciliation; it is not permission to retry.
 
 Deployment review checks the approved Devnet genesis, executable program/upgradeable-loader owner, canonical ProgramData pointer, loader state and slot, authority metadata, and exact code bytes against the local reviewed artifact with only zero allocation padding accepted. Mutable upgrade authorities are blocked because no approved authority policy is recorded; `null` authority with an absent program means **not observed**, not proof of immutability. Artifact equality is reported only as matching **RPC-reported bytes**, not independent chain/source verification. The DEMO mint must be initialized classic SPL, 6 decimals, no freeze authority and match the approval record's public mint authority. The provenance remains unverified_devnet_rpc.
 
@@ -187,8 +187,9 @@ request after refresh. **Validate private verifier handoff** is enabled only for
 a currently observed Submitted milestone recorded for that wallet. The server
 freshly validates the student, manifest and evidence commitments through
 `POST /api/v1/workflow/verification`, taking the state target plus `evidence` in
-the existing verifier `Request` format. The response explicitly reports dispatch
-unavailable, authorization not granted and no persistence. Never publish this
+the existing verifier `Request` format. The response reports authorization not granted and no persistence. Dispatch is
+unavailable in production. Only explicit offline fixture composition can report
+contributor admission required and provide the separate test-only dispatch route. Never publish this
 request: it contains the evidence nonce. No GitHub token belongs in these forms;
 unknown credential fields are rejected. The existing `/verify` retains its
 independent GitHub authentication, origin rejection, state rechecks and isolated
@@ -207,4 +208,82 @@ of the trusted ingestion actor, transaction/account evidence and finality policy
 retention/privacy and recovery rules, plus any necessary reviewed schema change.
 Trusted verifier dispatch still needs approved credential custody and caller
 admission distinct from the wallet session. Those specific paths are not enabled
-by this integration; no unsigned proposal creates a successful lifecycle job.
+in production. An unsigned proposal alone never creates a lifecycle job. Only
+explicit offline composition can admit a validated actual Submitted fixture and
+create the existing coordinator job; its stored rows are not live authorization.
+
+## One-lifecycle verifier admission and settlement review
+
+The candidate prepares admission of ONE chain-validated Submitted commitment to
+the existing verifier and v5 job store. This is an explicit backend configuration,
+not authority conferred by wallet login. Live verifier dispatch is hard-disabled (`LIVE_VERIFIER_DISPATCH=false`); the
+production CLI rejects dispatch configuration. Only isolated tests compose the
+adapter with explicit fixtures. A later separately approved activation would need
+`APP_CHAIN_READS=devnet` and all five independently approved settings below:
+
+- `APP_GITHUB_USER_TOKEN_FILE`: absolute path outside Git to an existing contributor
+  credential file, owned by the server user and readable only by that user (0600).
+  Symlinks are rejected. Never send its contents through the browser, chat or logs.
+- `APP_VERIFICATION_MILESTONE`: exact existing Submitted milestone PDA.
+- `APP_VERIFICATION_REPOSITORY_ID`: approved numeric GitHub repository ID.
+- `APP_VERIFICATION_CONTRIBUTOR_ID`: independently authenticated contributor ID.
+- `APP_VERIFICATION_COMMIT`: exact approved 40-character lowercase commit SHA.
+
+The existing `VERIFIER_PUBLIC_KEY`, `SOLANA_RPC_URL` and `TRUSTED_RUNNER_IMAGE`
+configuration still applies. GitHub authenticates the contributor against the
+recorded evidence; the same `VerifierService`, source checks and isolated
+`DockerRunner` run the agreed manifest. This change supplies no credentials,
+approved repository, runner image, signer or production configuration.
+
+The authenticated student first refreshes the actual Submitted scope, validates
+the private handoff, then explicitly requests independent verification. The new
+`POST /api/v1/workflow/dispatch` accepts exactly the handoff input, never a GitHub
+token or claimed verification result. Admission and session checks precede job
+creation. Public bindings alone enter the existing job tables; manifest bytes,
+nonce, source and credentials do not. The response contains a job ID for the
+existing authenticated job read route. Prepared, running, rejected and uncertain
+jobs are not automatically rerun, including after a dispatcher restart. Existing
+trusted job recovery/fencing remains authoritative.
+
+Passing verification is NOT operational attestation authorization. Offline dispatch
+runs the existing `DurableOfflineCoordinator`, including its fresh `AttestationAuthorizer`,
+exact-message policy, worker fences and mock receipt. It does not leave a separate
+completed-job path that the coordinator cannot resume. The browser/runtime test
+signs that original process-local mock message with separate fixture payer and
+verifier keys; no stored row or HTTP JSON is promoted to authority. The signing/custody,
+operational journal and action admission gates are unchanged.
+
+For an observed Verified milestone the frontend offers `settle milestone — review`.
+The existing wallet reviewer uses the actual `prepareSettlementTransaction` client,
+retains canonical student destination and Policy v2 sponsor destination validation,
+and includes atomic fallback provisioning in the exact reviewed message and rent.
+The application restricts private scope reads to the recorded sponsor/student;
+the on-chain instruction remains permissionless with its original ABI.
+
+Settlement confirmation requires the exact signed wire at a confirmed slot,
+canonical transaction token-balance metadata, exact reward/surplus deltas, vault
+closure/rent return and a freshly decoded matching completion record. Only that
+correlation may say `exact_reward_confirmed`. It describes the transaction's raw
+post-balances, not a guarantee that the student has not spent tokens afterward.
+Missing, failed, processed-only or inconsistent evidence remains Unknown/Failed,
+never authorizes retry, and cannot promote a transient Settled observation to paid.
+
+Live Phantom signing and broadcasting remain disabled in both browser and backend.
+No configuration above enables live verifier dispatch or a blockchain write. No new database schema, Rust
+layout, instruction ABI, mint, destination policy or dependency lock is introduced.
+
+Infrastructure outages (including unavailable/rate-limited GitHub or runner) enter
+existing recovery bookkeeping, not permanent verification rejection. Dispatch does
+not automatically retry them. Graceful application shutdown stops accepting HTTP
+requests, drains admitted verifier tasks, then closes SQLite. A forced process kill
+still requires the existing trusted interrupted-job recovery procedure.
+Transaction-local balances, rather than a stale review balance, establish receipt
+deltas; unrelated credits and unsolicited vault surplus/rent do not invalidate an
+otherwise exact payment. Actual fees and rent must stay within the reviewed costs.
+
+Offline preparation progresses the same existing job to `authorization_pending`
+only through the durable coordinator's fresh verifier and one-use message policy.
+Its local mock receipt carries `signingAuthorization: not_granted`; no historical
+row, serialized receipt, browser request or environment flag is live authority.
+The adapter rejects production RPC provenance and accepts only explicit offline
+fixture composition. Live dispatch has no production factory in this candidate.

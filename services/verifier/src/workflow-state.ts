@@ -25,7 +25,7 @@ export interface WorkflowState {
  verifiedAt:string|null; completion:string|null; settledAt:string|null; vaultAmountRaw:string|null; vaultClosed:boolean|null;
  verification:"not_observed"|"attestation_observed"; rewardPayment:"not_established";
 }
-export interface VerificationHandoff {kind:"verification_handoff";request:Request;dispatch:"unavailable";authorization:"not_granted";persisted:false;rewardPayment:"not_established"}
+export interface VerificationHandoff {kind:"verification_handoff";request:Request;dispatch:"unavailable"|"contributor_admission_required";authorization:"not_granted";persisted:false;rewardPayment:"not_established"}
 export class WorkflowStateReader {
  constructor(private readonly rpc=new ReadOnlyWalletRpc(),readonly provenance:"offline_fixture"|"unverified_devnet_rpc"="unverified_devnet_rpc"){check(rpc instanceof ReadOnlyWalletRpc && ["offline_fixture","unverified_devnet_rpc"].includes(provenance),"invalid_chain_configuration",503);}
  async read(input:unknown,wallet:string):Promise<WorkflowState>{

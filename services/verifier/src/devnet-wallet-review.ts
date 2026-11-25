@@ -1,3 +1,4 @@
+import {prepareReviewedSettlement,settlementPostconditions,type SettlementReviewPlan,type SettlementReceipt} from "./wallet-settlement.js";
 /** Read-only Devnet wallet review. No signer, sender, custody, state mutation or live enable switch. */
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -11,7 +12,7 @@ import { WalletAuthError } from "./wallet-sessions.js";
 import { transactionId as base58 } from "./devnet-execution.js";
 export const UPGRADEABLE_LOADER = "BPFLoaderUpgradeab1e11111111111111111111111";
 const MINT_AUTHORITY = "249mMS9awYGUyMe22zabsSCo8cH4RDo3MeN3mAHFdy69"; // TEAM_APPROVAL.md
-const operations = ["create_internship", "create_milestone", "fund_milestone", "assign_student", "submit_milestone"] as const;
+const operations = ["create_internship", "create_milestone", "fund_milestone", "assign_student", "submit_milestone", "settle_milestone"] as const;
 export type WalletOperation = typeof operations[number];
 function check(ok: unknown, code: string): asserts ok { if (!ok) throw new WalletAuthError(code, 400); }
 function integer(v: unknown): number { check(typeof v === "number" && Number.isSafeInteger(v) && v >= 0, "invalid_rpc_response"); return v; }
@@ -20,6 +21,7 @@ function data(a: any, size?: number): Buffer {
   check(a && Array.isArray(a.data) && a.data.length === 2 && a.data[1] === "base64" && typeof a.data[0] === "string", "invalid_account");
   const b = Buffer.from(a.data[0], "base64"); check(b.toString("base64") === a.data[0] && (size === undefined || b.length === size), "invalid_account"); return b;
 }
+const emptyAccount=(a:any)=>a===null||(a?.owner===SystemProgram.programId.toBase58()&&a.executable===false&&JSON.stringify(a.data)==='["","base64"]');
 const hash = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 export interface ApprovedArtifact { bytes: Buffer; sha256: string }
 export async function reviewedArtifact(): Promise<ApprovedArtifact> {
@@ -94,12 +96,56 @@ export interface WalletReview {
   deployment:DeploymentObservation|null; blockers:string[]; rewardPayment:"not_established"; provenance:"unverified_devnet_rpc";
 }
 interface Context { view:WalletReview; plan:WorkflowPreparation; message:Buffer; deadline:number; created:number; beforeToken:bigint|null }
-export interface WalletConfirmation {kind:"wallet_execution_confirmation";state:"confirmed"|"failed"|"unknown";signature:string;explorerUrl:string|null;rewardPayment:"not_established";retryAuthorized:false;provenance:"unverified_devnet_rpc"}
+export interface WalletConfirmation {kind:"wallet_execution_confirmation";state:"confirmed"|"failed"|"unknown";signature:string;explorerUrl:string|null;rewardPayment:"not_established"|"exact_reward_confirmed";settlement?:SettlementReceipt;retryAuthorized:false;provenance:"unverified_devnet_rpc"}
 export class WalletExecutionReviewer {
   readonly #tickets=new Map<string,Context>();
+  readonly #settlements=new Map<string,{view:WalletReview;prepared:SettlementReviewPlan;message:Buffer;created:number;deadline:number}>();
+  private settlement(id:string,wallet:string){const c=this.#settlements.get(id);check(c&&c.view.wallet===wallet&&this.now()-c.created>=0&&this.now()-c.created<600000,"review_unavailable");return c;}
+  private async reviewSettlement(input:unknown,wallet:string):Promise<WalletReview>{
+    const view:WalletReview={kind:"wallet_execution_review",state:"blocked",liveExecution:false,operation:"settle_milestone",wallet,reviewId:null,messageBase64:null,messageBase58:null,blockhash:null,lastValidBlockHeight:null,observedSlot:null,expiresAt:null,feeLamports:null,rentLamports:null,deployment:null,blockers:[],rewardPayment:"not_established",provenance:"unverified_devnet_rpc"};
+    try{
+      view.deployment=await observeDeployment(this.rpc,await this.artifact());check(view.deployment.blockers.length===0,view.deployment.blockers[0]??"deployment_unverified");
+      const prepared=await prepareReviewedSettlement(this.rpc,input,wallet,view.deployment.slot,randomUUID().replaceAll("-",""));
+      const latest=await this.rpc.call("getLatestBlockhash",[{commitment:"confirmed",minContextSlot:prepared.slot}]);check(integer(latest?.context?.slot)>=prepared.slot,"stale_rpc_context");
+      const blockhash=new PublicKey(latest.value.blockhash).toBase58(),deadline=integer(latest.value.lastValidBlockHeight);check(blockhash===latest.value.blockhash&&blockhash!==PublicKey.default.toBase58(),"invalid_blockhash");
+      check(integer(await this.rpc.call("getBlockHeight",[{commitment:"confirmed"}]))<deadline&&contextual(await this.rpc.call("isBlockhashValid",[blockhash,{commitment:"confirmed",minContextSlot:prepared.slot}]),prepared.slot)===true,"expired_blockhash");
+      prepared.transaction.recentBlockhash=blockhash;const message=prepared.transaction.serializeMessage(),compiled=prepared.transaction.compileMessage();
+      check(compiled.header.numRequiredSignatures===1&&compiled.accountKeys[0]!.toBase58()===wallet,"incorrect_required_signer");
+      const fee=integer(contextual(await this.rpc.call("getFeeForMessage",[message.toString("base64"),{commitment:"confirmed",minContextSlot:prepared.slot}]),prepared.slot));
+      check(prepared.rent<=BigInt(Number.MAX_SAFE_INTEGER)&&prepared.balance>=prepared.rent+BigInt(fee),"insufficient_lamports");
+      const id=randomUUID(),created=this.now();Object.assign(view,{state:"ready_for_review",reviewId:id,messageBase64:message.toString("base64"),messageBase58:base58(message),blockhash,lastValidBlockHeight:deadline,observedSlot:prepared.slot,expiresAt:new Date(created+20000).toISOString(),feeLamports:fee,rentLamports:Number(prepared.rent),blockers:["live_execution_disabled"]});
+      this.#settlements.set(id,{view:structuredClone(view),prepared,message,created,deadline});
+    }catch(e){view.blockers=[e instanceof WalletAuthError?e.code:"settlement_validation_failed"];}
+    return view;
+  }
+  private async revalidateSettlement(id:string,wallet:string):Promise<void>{
+    const c=this.settlement(id,wallet);check(this.now()-c.created<20000,"review_expired");const deployment=await observeDeployment(this.rpc,await this.artifact());check(deployment.blockers.length===0,"deployment_changed");
+    const p=await prepareReviewedSettlement(this.rpc,c.prepared.scope,wallet,Math.max(deployment.slot,c.view.observedSlot!),c.prepared.seed);p.transaction.recentBlockhash=c.view.blockhash!;
+    check(p.transaction.serializeMessage().equals(c.message)&&p.rent===c.prepared.rent,"transaction_changed");
+    const fee=integer(contextual(await this.rpc.call("getFeeForMessage",[c.view.messageBase64,{commitment:"confirmed",minContextSlot:p.slot}]),p.slot));
+    check(fee===c.view.feeLamports&&p.balance>=p.rent+BigInt(fee),"fee_or_balance_changed");
+    check(integer(await this.rpc.call("getBlockHeight",[{commitment:"confirmed"}]))<c.deadline&&contextual(await this.rpc.call("isBlockhashValid",[c.view.blockhash,{commitment:"confirmed",minContextSlot:p.slot}]),p.slot)===true,"expired_blockhash");
+    check(this.now()-c.created>=0&&this.now()-c.created<20000,"review_expired");c.prepared=p;
+  }
+  private async confirmSettlement(id:string,wallet:string,wireBase64:string):Promise<WalletConfirmation>{
+    const c=this.settlement(id,wallet),signed=this.validateSigned(id,wallet,wireBase64);
+    const out:WalletConfirmation={kind:"wallet_execution_confirmation",state:"unknown",signature:signed.signature,explorerUrl:null,rewardPayment:"not_established",retryAuthorized:false,provenance:"unverified_devnet_rpc"};
+    try{
+      check(await this.rpc.call("getGenesisHash")===SETTLEMENT_DEVNET_GENESIS,"wrong_cluster");
+      const statuses=await this.rpc.call("getSignatureStatuses",[[signed.signature],{searchTransactionHistory:true}]);check(Array.isArray(statuses?.value)&&statuses.value.length===1,"invalid_rpc_response");const status=statuses.value[0];
+      if(!status||!["confirmed","finalized"].includes(status.confirmationStatus))return out;
+      check(Object.hasOwn(status,"err"),"invalid_rpc_response");const slot=integer(status.slot);check(integer(statuses.context?.slot)>=slot&&slot>=c.view.observedSlot!,"invalid_rpc_response");
+      if(status.err!==null){out.state="failed";return out;}
+      const transaction=await this.rpc.call("getTransaction",[signed.signature,{encoding:"base64",commitment:"confirmed",maxSupportedTransactionVersion:0}]);
+      check(transaction?.meta?.err===null&&integer(transaction.slot)===slot&&Array.isArray(transaction.transaction)&&transaction.transaction[1]==="base64"&&transaction.transaction[0]===wireBase64,"transaction_not_correlated");
+      const receipt=await settlementPostconditions(this.rpc,c.prepared,wallet,Transaction.from(signed.wire),transaction.meta,slot,c.view.feeLamports!);
+      Object.assign(out,{state:"confirmed",rewardPayment:"exact_reward_confirmed",settlement:receipt,explorerUrl:"https://explorer.solana.com/tx/"+signed.signature+"?cluster=devnet"});
+    }catch{/* Incomplete, stale or uncertain evidence remains Unknown. No resend permission. */}
+    return out;
+  }
   constructor(readonly rpc=new ReadOnlyWalletRpc(),private readonly artifact:()=>Promise<ApprovedArtifact|undefined>=async()=>{try{return await reviewedArtifact();}catch{return undefined;}},private readonly now=()=>Date.now()){}
   private context(id:string,wallet:string):Context {const c=this.#tickets.get(id);check(c && c.view.wallet===wallet && this.now()-c.created>=0 && this.now()-c.created<600000,"review_unavailable");return c;}
-  private prune(){for(const [id,c]of this.#tickets)if(this.now()-c.created<0 || this.now()-c.created>=600000)this.#tickets.delete(id);check(this.#tickets.size<64,"review_capacity");}
+  private prune(){for(const [id,c]of this.#tickets)if(this.now()-c.created<0 || this.now()-c.created>=600000)this.#tickets.delete(id);for(const [id,c]of this.#settlements)if(this.now()-c.created<0||this.now()-c.created>=600000)this.#settlements.delete(id);check(this.#tickets.size+this.#settlements.size<64,"review_capacity");}
   private token(a:any,authority:string):bigint {check(a && a.executable===false && a.owner===TOKEN_PROGRAM_ID,"invalid_token_account");const b=data(a,165);
     check(new PublicKey(b.subarray(0,32)).toBase58()===DEMO_MINT && new PublicKey(b.subarray(32,64)).toBase58()===authority && b[108]===1
       && b.readUInt32LE(109)===0 && b.readUInt32LE(72)===0 && b.readUInt32LE(129)===0,"invalid_token_account");return b.readBigUInt64LE(64);}
@@ -108,27 +154,28 @@ export class WalletExecutionReviewer {
     const {slot,values:a}=await this.rpc.accounts(addresses,minimum,signal);const time=await this.rpc.call("getBlockTime",[slot],signal);
     check(Number.isSafeInteger(time) && time>0,"chain_clock_unavailable");
     const payer=a[5];check(payer && payer.executable===false && payer.owner===SystemProgram.programId.toBase58() && data(payer,0).length===0,"invalid_payer");const balance=integer(payer.lamports);
-    if(op==="create_internship" && !post){check(a[0]===null,"duplicate_internship");return {slot,balance,token:null};}
+    if(op==="create_internship" && !post){check(emptyAccount(a[0]),"duplicate_internship");return {slot,balance,token:null};}
     const parent=decodeInternship(plan.internship,a[0]);check(parent.sponsor===t.sponsor && parent.internshipId===BigInt(t.internshipId),"binding_mismatch");
     if(op==="create_internship")return {slot,balance,token:null};
-    if(op==="create_milestone" && !post){check(a[1]===null,"duplicate_milestone");check(BigInt(time)<BigInt(t.assignBy),"expired_deadline");return {slot,balance,token:null};}
+    if(op==="create_milestone" && !post){check(emptyAccount(a[1]),"duplicate_milestone");check(BigInt(time)<BigInt(t.assignBy),"expired_deadline");return {slot,balance,token:null};}
     const m=decodeMilestone(plan.milestone,a[1],parent);
     check(m.milestoneId===BigInt(t.milestoneId) && m.verifier===t.verifier && m.requirementsHash===plan.requirementsHash
       && m.rewardAmount===BigInt(t.rewardAmountRaw) && m.assignBy===BigInt(t.assignBy) && m.submitBy===BigInt(t.submitBy),"binding_mismatch");
-    const states:Record<WalletOperation,string>={create_internship:"",create_milestone:"Created",fund_milestone:post?"Funded":"Created",assign_student:post?"Assigned":"Funded",submit_milestone:post?"Submitted":"Assigned"};
+    const states:Record<WalletOperation,string>={create_internship:"",create_milestone:"Created",fund_milestone:post?"Funded":"Created",assign_student:post?"Assigned":"Funded",submit_milestone:post?"Submitted":"Assigned",settle_milestone:"Verified"};
     check(m.status===states[op],"invalid_milestone_state");
     if(!post)check(BigInt(time)<(op==="submit_milestone"?m.submitBy:m.assignBy),"expired_deadline");
     if(op==="assign_student" && post || op==="submit_milestone")check(m.student===t.student,"incorrect_student");
     if(op==="submit_milestone" && post){const s=decodeSubmission(addresses[2]!,a[2],m);check(s.evidenceHash===plan.evidenceHash,"evidence_mismatch");}
-    else check(a[2]===null,"duplicate_submission");
+    else check(emptyAccount(a[2]),"duplicate_submission");
     let token:bigint|null=null;
-    if(op==="fund_milestone" && !post){check(a[3]===null,"duplicate_vault");token=this.token(a[4],t.sponsor);check(token>=m.rewardAmount,"insufficient_tokens");}
+    if(op==="fund_milestone" && !post){check(emptyAccount(a[3]),"duplicate_vault");token=this.token(a[4],t.sponsor);check(token>=m.rewardAmount,"insufficient_tokens");}
     if(op==="assign_student" || op==="submit_milestone" || op==="fund_milestone" && post){check(this.token(a[3],deriveVaultAuthority(plan.milestone)[0].toBase58())>=m.rewardAmount,"insufficient_escrow");}
     if(op==="fund_milestone" && post)token=this.token(a[4],t.sponsor);
     return {slot,balance,token};
   }
   async review(input:unknown,wallet:string):Promise<WalletReview>{
     this.prune();const v=input as any;check(v && typeof v==="object" && JSON.stringify(Object.keys(v).sort())==='["operation","workflow"]' && operations.includes(v.operation),"invalid_wallet_review");
+    if(v.operation==="settle_milestone")return this.reviewSettlement(v.workflow,wallet);
     const op:WalletOperation=v.operation,plan=prepareWorkflow(v.workflow,wallet),step=plan.steps.find(s=>s.action===op);check(step && step.feePayer===wallet,"incorrect_required_signer");
     const view:WalletReview={kind:"wallet_execution_review",state:"blocked",liveExecution:false,operation:op,wallet,reviewId:null,messageBase64:null,messageBase58:null,
       blockhash:null,lastValidBlockHeight:null,observedSlot:null,expiresAt:null,feeLamports:null,rentLamports:null,deployment:null,blockers:[],rewardPayment:"not_established",provenance:"unverified_devnet_rpc"};
@@ -154,6 +201,7 @@ export class WalletExecutionReviewer {
     return view;
   }
   async revalidate(id:string,wallet:string):Promise<void>{
+    if(this.#settlements.has(id))return this.revalidateSettlement(id,wallet);
     const c=this.context(id,wallet);check(this.now()-c.created>=0 && this.now()-c.created<20000,"review_expired");const signal=AbortSignal.timeout(10000);
     const observation=await observeDeployment(this.rpc,await this.artifact(),signal);check(observation.blockers.length===0,"deployment_changed");
     const before=await this.snapshot(c.plan,c.view.operation,wallet,Math.max(c.view.observedSlot!,observation.slot),false,signal);
@@ -167,12 +215,13 @@ export class WalletExecutionReviewer {
     check(this.now()-c.created>=0 && this.now()-c.created<20000,"review_expired");
   }
   validateSigned(id:string,wallet:string,wireBase64:string):{signature:string;wire:Buffer}{
-    const c=this.context(id,wallet);check(typeof wireBase64==="string" && wireBase64.length<=1700,"invalid_signed_transaction");const wire=Buffer.from(wireBase64,"base64");
+    const c=this.#settlements.has(id)?this.settlement(id,wallet):this.context(id,wallet);check(typeof wireBase64==="string" && wireBase64.length<=1700,"invalid_signed_transaction");const wire=Buffer.from(wireBase64,"base64");
     check(wire.toString("base64")===wireBase64 && wire.length<=1232,"invalid_signed_transaction");const tx=Transaction.from(wire);
     check(tx.serializeMessage().equals(c.message) && tx.signatures.length===1 && tx.signatures[0]!.publicKey.toBase58()===wallet && tx.verifySignatures() && tx.serialize().equals(wire),"transaction_substitution");
     return {signature:base58(tx.signatures[0]!.signature!),wire};
   }
   async confirm(id:string,wallet:string,wireBase64:string):Promise<WalletConfirmation>{
+    if(this.#settlements.has(id))return this.confirmSettlement(id,wallet,wireBase64);
     const c=this.context(id,wallet),signed=this.validateSigned(id,wallet,wireBase64);
     const out:WalletConfirmation={kind:"wallet_execution_confirmation",state:"unknown",signature:signed.signature,explorerUrl:null,rewardPayment:"not_established",retryAuthorized:false,provenance:"unverified_devnet_rpc"};
     try {

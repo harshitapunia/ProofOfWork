@@ -262,3 +262,12 @@ test("workflow observation rechecks session after an awaited real HTTPS read",as
  const pending=f.send("/api/v1/workflow/state",{...envelope,sponsor:f.sponsor.wallet,internshipId:"9",milestoneId:"1"});
  await started;f.advance(SESSION_LIFETIME_MS);release();const response=await pending;assert.equal(response.status,401);assert.equal(response.body.data,null);
 });
+
+test("actual HTTPS dispatch retains wallet, Origin and independent admission gates",async t=>{
+ const f=await fixture(t),path="/api/v1/workflow/dispatch",before=f.base.snapshot();
+ assert.equal((await f.send(path,envelope)).status,401);await f.login(f.student);
+ const disabled=await f.send(path,envelope);assert.equal(disabled.status,503);assert.equal(disabled.body.error.code,"verification_dispatch_unavailable");
+ assert.equal((await f.send(path,envelope,{headers:{authorization:"Bearer not-a-wallet-capability"}})).status,401);
+ assert.equal((await f.send(path,envelope,{headers:{origin:"https://untrusted.invalid"}})).status,400);
+ assert.equal(f.legacyCalls(),0);assert.deepEqual(f.base.snapshot(),before);
+});

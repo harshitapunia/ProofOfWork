@@ -1,3 +1,4 @@
+import {WorkflowVerification,admittedContributor,LIVE_VERIFIER_DISPATCH} from "./workflow-verification.js";
 import { WorkflowStateReader } from "./workflow-state.js";
 import { WalletExecutionReviewer } from "./devnet-wallet-review.js";
 /** Deliberate loopback-only application CLI. The legacy verifier CLI remains unchanged. */
@@ -12,7 +13,13 @@ import { GitHub } from "./github.js";
 import { DevnetReader } from "./chain.js";
 import { DockerRunner } from "./runner.js";
 
+/** Close only after accepted background work has recorded completion or recovery. */
+export async function closeApplicationStore(store:Pick<LifecycleStore,"close">,verification?:Pick<WorkflowVerification,"drain">):Promise<void>{
+  try{await verification?.drain();}finally{store.close();}
+}
 export async function startApplication(env: NodeJS.ProcessEnv = process.env) {
+  const admission=admittedContributor(env);
+  if(admission&&!LIVE_VERIFIER_DISPATCH)throw new Error("live_verifier_dispatch_disabled");
   const required = (name: string) => { const value = env[name]; if (!value) throw new Error("application_configuration_required"); return value; };
   const origin = applicationOrigin(required("APP_ORIGIN"));
   const certFile = required("APP_TLS_CERT_FILE"), keyFile = required("APP_TLS_KEY_FILE"), db = required("APP_LIFECYCLE_DB");
@@ -26,11 +33,16 @@ export async function startApplication(env: NodeJS.ProcessEnv = process.env) {
   try {
     const sessions = new WalletSessions({ origin: origin.origin, domain: origin.host, cluster: "devnet" });
     const service = new VerifierService(new GitHub(), new DevnetReader(env.SOLANA_RPC_URL, env.VERIFIER_PUBLIC_KEY), new DockerRunner(env.TRUSTED_RUNNER_IMAGE));
+    if(admission&&chainMode!=="devnet")throw new Error("verification_requires_devnet_reads");
+    const workflowState=chainMode==="devnet"?new WorkflowStateReader():undefined;
+    // Live dispatch has no production factory. Tests inject the existing offline
+    // coordinator explicitly; configuration cannot manufacture live authority.
+    const workflowVerification:WorkflowVerification|undefined=undefined;
     const server = await createApplicationServer({ cert, key }, {
       assetsDirectory: env.APP_WEB_DIST ?? fileURLToPath(new URL("../../../../apps/web/dist/", import.meta.url)), sessions, store, service,
-      ...(chainMode === "devnet" ? { workflowState: new WorkflowStateReader(), walletReview: new WalletExecutionReviewer(), chain: { reader: new DevnetLifecycleReader("confirmed"), provenance: "unverified_devnet_rpc" as const } } : {}),
+      ...(chainMode === "devnet" ? { workflowState: workflowState!, ...(workflowVerification?{workflowVerification}:{}), walletReview: new WalletExecutionReviewer(), chain: { reader: new DevnetLifecycleReader("confirmed"), provenance: "unverified_devnet_rpc" as const } } : {}),
     });
-    server.once("close", () => store.close());
+    server.once("close", () => { void closeApplicationStore(store,workflowVerification).catch(()=>{console.error("application_shutdown_failed");process.exitCode=1;}); });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject); server.listen(Number(origin.port), "127.0.0.1", () => { server.off("error", reject); resolve(); });
     });
@@ -39,7 +51,7 @@ export async function startApplication(env: NodeJS.ProcessEnv = process.env) {
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   startApplication().then(({ server, origin }) => {
-    console.log("ProofOfWork local read-only application: " + origin);
+    console.log("ProofOfWork local application (chain writes disabled): " + origin);
     const stop = () => { server.close(); server.closeIdleConnections(); };
     process.once("SIGINT", stop); process.once("SIGTERM", stop);
     server.on("error", () => { console.error("application_server_error"); stop(); process.exitCode = 1; });

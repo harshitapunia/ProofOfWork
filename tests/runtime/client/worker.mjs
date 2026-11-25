@@ -18,9 +18,9 @@ for await(const line of readline.createInterface({input:process.stdin})){
   if(q.op==="init"){console.log(JSON.stringify({ok:true,pub}));continue;}
   if(q.op?.startsWith("browser-")){const b=await import("./browser.mjs");console.log(JSON.stringify(await b.handle(q,pub,(wallet,bytes)=>{const secret=keys.get(wallet);if(!secret)throw Error("unknown_test_wallet");return crypto.sign(null,bytes,secret);})));if(q.op==="browser-stop"&&q.shutdown===true)break;continue;}
   if(q.op==="journey-plan"){const j=await import("./journey.mjs");console.log(JSON.stringify(j.plan(pub)));continue;}
-  let tx,selection=null,expectedSigner=pub.caller;
+  let tx,selection=null,expectedSigner=pub.caller,expectedSigners=null,policyMessage=null;
   if(q.op==="journey"){
-   const j=await import("./journey.mjs"),built=await j.instruction(q,pub);tx=built.transaction;expectedSigner=built.signer;
+   const j=await import("./journey.mjs"),built=await j.instruction(q,pub);tx=built.transaction;expectedSigner=built.signer;expectedSigners=built.signers??null;policyMessage=built.policyMessage??null;
   }else if(q.op==="prepare"){
    const rpc={rpcEndpoint:client.SETTLEMENT_DEVNET_RPC,
     async getGenesisHash(){return client.SETTLEMENT_DEVNET_GENESIS;},
@@ -55,7 +55,8 @@ for await(const line of readline.createInterface({input:process.stdin})){
   if(q.lateFailure)tx.add(SystemProgram.transfer({fromPubkey:tx.feePayer,toPubkey:new PublicKey(pub.sentinel),lamports:18446744073709551615n}));
   tx.recentBlockhash=q.blockhash;
   const message=tx.serializeMessage(),required=tx.compileMessage().accountKeys.slice(0,tx.compileMessage().header.numRequiredSignatures);
-  if(q.op!=="fixture" && (required.length!==1||required[0].toBase58()!==expectedSigner))throw new Error("unexpected signing identity");
+  if(policyMessage&&!Buffer.from(policyMessage).equals(message))throw new Error("policy_message_changed");
+  if(q.op!=="fixture" && JSON.stringify(required.map(k=>k.toBase58()))!==JSON.stringify(expectedSigners??[expectedSigner]))throw new Error("unexpected signing identity");
   if(!q.unsigned)for(const address of required){
    const secret=keys.get(q.wrongSignature?pub.sentinel:address.toBase58());
    if(!secret)throw new Error("unknown fixture signer");

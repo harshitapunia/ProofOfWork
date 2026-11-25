@@ -62,6 +62,8 @@ const inputs = [
   "apps/web/dist/index.html", "apps/web/dist/mark.svg",
   "apps/web/dist/assets/app.js", "apps/web/dist/assets/app.css",
   "services/verifier/src/workflow-state.ts", "services/verifier/dist/src/workflow-state.js",
+  "services/verifier/src/workflow-verification.ts", "services/verifier/dist/src/workflow-verification.js",
+  "services/verifier/src/wallet-settlement.ts", "services/verifier/dist/src/wallet-settlement.js",
   "services/verifier/src/application.ts", "services/verifier/src/wallet-application-http.ts",
   "services/verifier/dist/src/application.js", "services/verifier/dist/src/wallet-application-http.js",
   "tests/runtime/client/journey.mjs",

@@ -6,9 +6,10 @@ interface Review {kind:"wallet_execution_review";state:"blocked"|"ready_for_revi
  messageBase58:string|null;reviewId:string|null;messageBase64:string|null;feeLamports:number|null;rentLamports:number|null;expiresAt:string|null;rewardPayment:"not_established"}
 export function ExecutionReview({workflow,operations,wallet,onExpired}:{workflow:object;operations:string[];wallet:string;onExpired:()=>void}){
  const [review,setReview]=useState<Review|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState("");const generation=useRef(0),flow=useRef<WalletApprovalFlow|null>(null);
+ const [receipt,setReceipt]=useState<{rewardAmountRaw:string;studentBeforeRaw:string;studentAfterRaw:string;sponsorSurplusRaw:string;completion:string}|null>(null);
  const [stage,setStage]=useState<WalletStage>("prepared");
  useEffect(()=>()=>{generation.current++;},[]);
- async function inspect(operation:string){const n=++generation.current;setReview(null);flow.current=null;setStage("prepared");setError("");setBusy(true);
+ async function inspect(operation:string){const n=++generation.current;setReview(null);setReceipt(null);flow.current=null;setStage("prepared");setError("");setBusy(true);
   try{const r=await request<Review>("/api/v1/workflow/review","wallet_execution_review",{...ENVELOPE,operation,workflow});
    if(generation.current!==n)return;if(r.data.wallet!==wallet||r.data.operation!==operation)throw new ApiError("invalid_api_response");setReview(r.data);
    if(r.data.state==="ready_for_review" && r.data.reviewId && r.data.messageBase58 && r.data.expiresAt){
@@ -19,7 +20,7 @@ export function ExecutionReview({workflow,operations,wallet,onExpired}:{workflow
      sign:()=>requestPhantomTransaction(getWallet(),reviewed),
      validate:async wire=>(await request<{signature:string}>("/api/v1/workflow/validate","wallet_execution_signature",{...ENVELOPE,reviewId:reviewed.reviewId,wireBase64:encode(wire)})).data.signature,
      broadcast:async wire=>{await request("/api/v1/workflow/broadcast","never_allowed",{...ENVELOPE,reviewId:reviewed.reviewId,wireBase64:encode(wire)});throw new Error("live_execution_disabled");},
-     confirm:async(wire,signature)=>{setStage("confirming");const c=await request<{state:"confirmed"|"failed"|"unknown";signature:string}>("/api/v1/workflow/confirm","wallet_execution_confirmation",{...ENVELOPE,reviewId:reviewed.reviewId,wireBase64:encode(wire)});if(c.data.signature!==signature)throw new Error("signature_mismatch");return c.data.state;}},()=>Date.now(),s=>{if(generation.current===n)setStage(s);});setStage("ready_for_review");
+     confirm:async(wire,signature)=>{setStage("confirming");const c=await request<{state:"confirmed"|"failed"|"unknown";signature:string;rewardPayment:string;settlement?:{rewardAmountRaw:string;studentBeforeRaw:string;studentAfterRaw:string;sponsorSurplusRaw:string;completion:string}}>("/api/v1/workflow/confirm","wallet_execution_confirmation",{...ENVELOPE,reviewId:reviewed.reviewId,wireBase64:encode(wire)});if(c.data.signature!==signature)throw new Error("signature_mismatch");if(generation.current===n&&c.data.state==="confirmed"&&c.data.rewardPayment==="exact_reward_confirmed"&&c.data.settlement)setReceipt(c.data.settlement);return c.data.state;}},()=>Date.now(),s=>{if(generation.current===n)setStage(s);});setStage("ready_for_review");
    }
   }catch(e){if(generation.current===n){if(e instanceof ApiError&&e.status===401)onExpired();else setError(e instanceof ApiError&&e.code==="wallet_review_unavailable"?"Devnet review is unavailable. Enable the existing APP_CHAIN_READS=devnet configuration and build the pinned SBF artifact; signing stays disabled.":message(e));}}
   finally{if(generation.current===n)setBusy(false);}}
@@ -35,6 +36,7 @@ export function ExecutionReview({workflow,operations,wallet,onExpired}:{workflow
    {review.messageBase64&&<label>Reviewed unsigned transaction message<textarea readOnly value={review.messageBase64}/></label>}
    <p>Fee: {review.feeLamports??"Not established"} lamports. Rent: {review.rentLamports??"Not established"} lamports. Reward payment not established.</p></div>}
   <p>Prepared instructions require a separate fresh review for each operation. No creation or payment is confirmed by preparation.</p>
+  {receipt&&<p role="status">Correlated settlement RPC evidence: student raw DEMO balance {receipt.studentBeforeRaw} → {receipt.studentAfterRaw}; exact reward {receipt.rewardAmountRaw}; sponsor surplus {receipt.sponsorSurplusRaw}; completion {receipt.completion}. Vault closure and rent return checked. RPC evidence is not an independent chain proof.</p>}
   <p>Wallet execution state: {stage.replaceAll("_"," ")}. No automatic retries are permitted.</p>
   <p>Live wallet signing and broadcasting require a separately authorized controlled Devnet rehearsal. No live authorization is enabled by this PR.</p>
   <div className="actions"><button disabled onClick={()=>void approve()}>Approve transaction in wallet — disabled</button><button disabled onClick={()=>void broadcast()}>Broadcast signed transaction — disabled</button></div>
