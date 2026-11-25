@@ -68,7 +68,10 @@ export class ApplicationQueries {
       || b.intent?.reconciliationRequired === true || b.attempt?.reconciliationRequired === true;
   }
   private jobView(b: Bundle): VerificationJobView {
-    return freeze({ kind: "verification_job", jobId: b.job.jobId, identity: b.job.identity, milestone: b.job.bindings.milestone,
+    const controlled=b.job.creationId.startsWith("controlled_");
+    const attempt=controlled?this.store.applicationTransactions.getForOperation("attest_milestone:"+b.job.bindings.milestone):undefined;
+    const controlledRecovery=controlled?{generation:b.job.generation,attemptId:attempt?.id??null,attemptState:attempt?.state??null}:undefined;
+    return freeze({ ...(controlledRecovery?{controlledRecovery}:{}), kind: "verification_job", jobId: b.job.jobId, identity: b.job.identity, milestone: b.job.bindings.milestone,
       state: b.job.state, verificationOutcome: b.job.verificationOutcome, reconciliationRequired: this.reconciliation(b),
       errorClassification: b.job.verificationOutcome === "rejected" ? "verification_rejected" : b.job.state === "recovery_required" ? "reconciliation_required" : null,
       fullVerificationResult: "not_persisted", timestamps: { createdAt: null, startedAt: null, finishedAt: null } });

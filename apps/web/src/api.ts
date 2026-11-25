@@ -3,7 +3,7 @@ export { uuid } from "./routes";
 /** Browser-only projection of the existing v1 API. No transaction or token capability. */
 export const VERSION = "proofwork-application-api-v1";
 export const ENVELOPE = { apiVersion: VERSION, cluster: "devnet" } as const;
-export interface Health { kind: "health"; readiness: "limited"; authentication: string; applicationReads: string; storage: "not_probed"; chain: "not_probed"; execution: "disabled" }
+export interface Health { kind: "health"; readiness: "limited"; authentication: string; applicationReads: string; storage: "not_probed"; chain: "not_probed"; execution: "disabled"|"action_approval_required" }
 export interface Session { kind: "wallet_session"; wallet: string; expiresAt: string; origin: string; domain: string; cluster: "devnet"; authenticationMethod: "siws-raw-ed25519" }
 export interface Challenge { kind: "wallet_challenge"; wallet: string; challengeId: string; message: string; issuedAt: string; expiresAt: string; signedMessageFormat: "siws-raw-ed25519" }
 export interface Job { kind: "verification_job"; jobId: string; milestone: string; state: string; verificationOutcome: "none" | "passed" | "rejected"; reconciliationRequired: boolean }
@@ -12,6 +12,13 @@ export interface Execution { kind: "execution_status"; jobId: string; phase: str
 export interface Observation<T> { data: T; provenance: string }
 export class ApiError extends Error {
   constructor(readonly code: string, readonly status = 0) { super(code); }
+}
+function validWalletConfirmation(d: any): boolean {
+  return !!d && d.kind==="wallet_execution_confirmation" && ["confirmed","failed","unknown"].includes(d.state) && typeof d.signature==="string" && (d.rewardPayment === "not_established" || (d.state==="confirmed"&&d.rewardPayment==="exact_reward_confirmed"&&d.settlement&&d.settlement.vaultClosed===true
+      && ["student","mint","sponsorDestination","completion"].every(k=>typeof d.settlement[k]==="string")
+      && ["rewardAmountRaw","studentBeforeRaw","studentAfterRaw","sponsorSurplusRaw","rentReturnedRaw"].every(k=>typeof d.settlement[k]==="string"&&/^(0|[1-9][0-9]*)$/.test(d.settlement[k]))
+      && BigInt(d.settlement.studentAfterRaw)-BigInt(d.settlement.studentBeforeRaw)===BigInt(d.settlement.rewardAmountRaw)))
+    && d.retryAuthorized === false && (d.explorerUrl === null || typeof d.explorerUrl === "string");
 }
 export async function request<T>(path: string, kind: string, body?: object, signal?: AbortSignal): Promise<Observation<T>> {
   let response: Response;
@@ -31,16 +38,18 @@ export async function request<T>(path: string, kind: string, body?: object, sign
     && d.provenance===value.provenance && ["student","verifier","requirementsHash","rewardAmountRaw","assignBy","submitBy","evidenceHash","verifiedAt","completion","settledAt","vaultAmountRaw"].every(k=>d[k]===null||typeof d[k]==="string")
     && (d.vaultClosed===null||typeof d.vaultClosed==="boolean") && Number.isSafeInteger(d.slot) && d.slot>=0 && d.commitment==="confirmed" && d.persisted===false && typeof d.internshipExists==="boolean" && typeof d.milestoneExists==="boolean"
     && (d.status===null || ["Created","Funded","Assigned","Submitted","Verified","Settled","Refunded"].includes(d.status)) && d.rewardPayment==="not_established"
-    : kind === "workflow_verification_job" ? d.mode==="offline-test-only" && strings("jobId","milestone","state") && ["none","passed","rejected"].includes(d.verificationOutcome) && d.persisted===true && d.attestation==="not_authorized" && d.rewardPayment==="not_established" && d.retryAuthorized===false
+    : kind === "workflow_verification_job" ? ["offline-test-only","controlled-devnet"].includes(d.mode) && strings("jobId","milestone","state") && ["none","passed","rejected"].includes(d.verificationOutcome) && d.persisted===true && d.attestation==="not_authorized" && d.rewardPayment==="not_established" && d.retryAuthorized===false
     : kind === "verification_handoff" ? d.request && typeof d.request==="object" && ["unavailable","contributor_admission_required"].includes(d.dispatch) && d.authorization==="not_granted" && d.persisted===false && d.rewardPayment==="not_established"
+    : kind === "wallet_execution_recovery" ? strings("operationKey","attemptId","recordedState")&&(d.signature===null||typeof d.signature==="string")&&(d.confirmation===null||validWalletConfirmation(d.confirmation)&&d.confirmation.signature===d.signature)&&d.retryAuthorized===false&&d.liveExecution===false
+    : kind === "attestation_review" ? strings("jobId","reviewId","wallet","feePayer","verifier","messageBase58","expiresAt","scopeDigest","operationKey") && d.feePayer!==d.verifier && d.liveExecution===true && Number.isSafeInteger(d.signatureCount)&&d.signatureCount>=0&&d.signatureCount<=2&&Number.isSafeInteger(d.feeLamports)&&d.feeLamports>=0
+    : kind === "attestation_signature" ? Number.isSafeInteger(d.signatureCount)&&d.signatureCount>=1&&d.signatureCount<=2
+    : kind === "attestation_confirmation" ? strings("signature")&&["confirmed","failed","unknown"].includes(d.state)&&d.retryAuthorized===false
+    : kind === "wallet_execution_authorization" ? d.liveExecution===true
+    : kind === "wallet_execution_submission" ? strings("signature")&&["submitted","unknown"].includes(d.state)&&d.retryAuthorized===false
     : kind === "wallet_execution_revalidation" ? d.liveExecution === false && d.state === "ready_for_review"
     : kind === "wallet_execution_signature" ? d.liveExecution === false && strings("signature")
-    : kind === "wallet_execution_confirmation" ? ["confirmed","failed","unknown"].includes(d.state) && strings("signature") && (d.rewardPayment === "not_established" || (d.state==="confirmed"&&d.rewardPayment==="exact_reward_confirmed"&&d.settlement&&d.settlement.vaultClosed===true
-      && ["student","mint","sponsorDestination","completion"].every(k=>typeof d.settlement[k]==="string")
-      && ["rewardAmountRaw","studentBeforeRaw","studentAfterRaw","sponsorSurplusRaw","rentReturnedRaw"].every(k=>typeof d.settlement[k]==="string"&&/^(0|[1-9][0-9]*)$/.test(d.settlement[k]))
-      && BigInt(d.settlement.studentAfterRaw)-BigInt(d.settlement.studentBeforeRaw)===BigInt(d.settlement.rewardAmountRaw)))
-    && d.retryAuthorized === false && (d.explorerUrl === null || typeof d.explorerUrl === "string")
-    : kind === "wallet_execution_review" ? ["blocked","ready_for_review"].includes(d.state) && d.liveExecution === false
+    : kind === "wallet_execution_confirmation" ? validWalletConfirmation(d)
+    : kind === "wallet_execution_review" ? ["blocked","ready_for_review"].includes(d.state) && typeof d.liveExecution === "boolean"
     && strings("operation","wallet") && Array.isArray(d.blockers) && d.blockers.every((v:unknown)=>typeof v==="string") && d.rewardPayment === "not_established"
     && (d.deployment === null || (typeof d.deployment === "object" && typeof d.deployment.programExists === "boolean" && typeof d.deployment.executable === "boolean"
       && typeof d.deployment.artifactEquality === "string" && d.deployment.mint && typeof d.deployment.mint.exists === "boolean"))
@@ -49,8 +58,11 @@ export async function request<T>(path: string, kind: string, body?: object, sign
     && strings("internship", "milestone", "requirementsHash") && Array.isArray(d.steps) && d.steps.length > 0 && d.steps.length <= 4
     && d.terms && typeof d.terms === "object" && d.accountState === "not_observed" && d.idsReserved === false
     && d.signed === false && d.broadcast === false && d.verification === "not_run" && d.proposalAuthority === "not_proven" && d.rewardPayment === "not_established"
-    : kind === "health" ? d.readiness === "limited" && strings("authentication", "applicationReads") && d.storage === "not_probed" && d.chain === "not_probed" && d.execution === "disabled"
+    : kind === "health" ? d.readiness === "limited" && strings("authentication", "applicationReads") && d.storage === "not_probed" && d.chain === "not_probed" && ["disabled","action_approval_required"].includes(d.execution)
     : kind === "verification_job" ? strings("jobId", "milestone", "state") && ["none", "passed", "rejected"].includes(d.verificationOutcome) && typeof d.reconciliationRequired === "boolean"
+      && (d.controlledRecovery===undefined || (!!d.controlledRecovery && Number.isSafeInteger(d.controlledRecovery.generation)
+        && d.controlledRecovery.generation>=0 && (d.controlledRecovery.attemptId===null || typeof d.controlledRecovery.attemptId==="string")
+        && (d.controlledRecovery.attemptState===null || typeof d.controlledRecovery.attemptState==="string")))
     : kind === "milestone_state" ? strings("address", "internship", "sponsor", "student", "rewardMint", "status", "rewardAmountRaw") && /^(0|[1-9][0-9]*)$/.test(d.rewardAmountRaw) && Number.isSafeInteger(d.slot) && d.programDeployment === "not_verified" && d.rewardPayment === "not_established"
     : kind === "execution_status" ? strings("jobId") && (d.phase === null || typeof d.phase === "string") && typeof d.reconciliationRequired === "boolean" && d.operationalExecution === "unavailable" && d.liveTransactionId === null && d.rewardPayment === "not_established"
     : kind === "wallet_logout" ? d.revoked === true
@@ -79,9 +91,9 @@ export function message(error: unknown): string {
     https_required: "Wallet sign-in requires the approved same-origin HTTPS backend. Demonstration mode works locally.",
     wallet_changed: "The wallet changed or disconnected. Sign in again with the intended account.",
     unsupported_signature: "This wallet did not return a raw 64-byte Ed25519 signature. No fallback format was used.",
-    invalid_api_response: "The server returned an unsupported response. The sign-in or read could not be confirmed. This app does not sign transactions.",
+    invalid_api_response: "The server returned an unsupported response. The sign-in or read could not be confirmed. No action was confirmed.",
     challenge_expired: "The challenge expired. Start sign-in again.",
-    wallet_rejected: "The wallet request was cancelled or rejected. You can try again.",
+    wallet_rejected: "The wallet request was cancelled or rejected. Stop and review the action state before any new attempt.",
   };
   if (error instanceof ApiError && error.status === 404) return "Record unavailable. It may not exist or this wallet may not have access.";
   return labels[code] ?? "This operation is unavailable. Please try again later.";

@@ -32,3 +32,17 @@ for(const phase of ["approve","broadcast"])for(const change of ["wallet","expiry
  const flow=new WalletApprovalFlow({...reviewed(),expiresAt:new Date(10000).toISOString()},ports,()=>now);
  await flow.approve();if(phase==="broadcast")await flow.broadcast();assert.equal(flow.stage,"failed");assert.equal(sends,0);
 });
+
+test("approved Devnet flow still requires separate human actions and rejects unapproved review",async()=>{
+ let signed=0,sent=0;const ports={mode:"approved-devnet",wallet:()=>"offline-test-wallet",revalidate:async()=>{},sign:async()=>{signed++;return new Uint8Array([1]);},validate:async()=>"offline-signature",broadcast:async()=>{sent++;return "offline-signature";},confirm:async()=>"confirmed"};
+ const refused=new WalletApprovalFlow(reviewed(),ports);await refused.approve();assert.equal(signed,0);
+ const flow=new WalletApprovalFlow({...reviewed(),liveExecution:true},ports);assert.equal(signed,0);await flow.approve();assert.equal(signed,1);assert.equal(sent,0);await flow.broadcast();assert.equal(sent,1);
+});
+test("Phantom sign-only request preserves partial signatures and never signs and sends",async()=>{
+ let method;const wire=await requestPhantomTransaction({publicKey:{toBase58:()=>"offline-test-wallet"},request:async request=>{method=request.method;return {serialize:options=>{assert.deepEqual(options,{requireAllSignatures:false,verifySignatures:false});return new Uint8Array([1]);}};}},{...reviewed(),liveExecution:true});assert.equal(method,"signTransaction");assert.deepEqual(wire,new Uint8Array([1]));
+});
+
+test("Unknown reconciliation reads exact original wire and signature without resigning or resending",async()=>{
+ let reads=0,signs=0,sends=0;const ports={mode:"approved-devnet",wallet:()=>"offline-test-wallet",revalidate:async()=>{},sign:async()=>{signs++;return new Uint8Array([1]);},validate:async()=>"signature",broadcast:async()=>{sends++;throw Error("uncertain");},confirm:async(wire,signature)=>{reads++;assert.deepEqual(wire,new Uint8Array([1]));assert.equal(signature,"signature");return "confirmed";}};
+ const flow=new WalletApprovalFlow({...reviewed(),liveExecution:true},ports);await flow.approve();await flow.broadcast();assert.equal(flow.stage,"unknown");await flow.reconcile();assert.equal(flow.stage,"confirmed");assert.equal(signs,1);assert.equal(sends,1);assert.equal(reads,1);await assert.rejects(flow.reconcile());await assert.rejects(flow.broadcast());
+});

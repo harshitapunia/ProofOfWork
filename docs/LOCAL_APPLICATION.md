@@ -4,6 +4,7 @@ This entry point serves the existing frontend production build and existing veri
 wallet-authentication and application-read handlers on **one loopback HTTPS listener**.
 It is a local hackathon composition, not authorization for public deployment.
 The original `npm --prefix services/verifier start` CLI is unchanged.
+For action-specific Devnet approval, see [Controlled Devnet rehearsal](CONTROLLED_DEVNET_REHEARSAL.md). The historical integration notes below describe the default disabled configuration unless otherwise stated.
 
 ## Install and build
 
@@ -287,3 +288,7 @@ Its local mock receipt carries `signingAuthorization: not_granted`; no historica
 row, serialized receipt, browser request or environment flag is live authority.
 The adapter rejects production RPC provenance and accepts only explicit offline
 fixture composition. Live dispatch has no production factory in this candidate.
+
+## Controlled production actions
+
+The default remains disabled. The separately gated signing/submission and dual-Phantom attestation path is documented in [Controlled Devnet rehearsal](CONTROLLED_DEVNET_REHEARSAL.md). Earlier offline evidence in this document does not authorize enabling it.

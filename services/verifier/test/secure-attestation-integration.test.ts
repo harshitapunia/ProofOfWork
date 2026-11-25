@@ -38,7 +38,7 @@ test("real trusted verification, authorization, v4 intent, dual signatures, v5 h
  assert.equal(a.invocationRecorded,false);assert.equal(a.wireDigest,null);assert.equal(a.testTransactionId,null);assert.equal(a.uncertain,true);
  assert.deepEqual(f.store.executionAttempts.history(a.attemptId).map(h=>h.evidence),["created","uncertain"]);
  assert.equal(f.store.jobs.createOrGetJob("same_operation",a.intent.bindings).jobId,r.jobId);
- const db=new DatabaseSync(f.path);assert.equal(db.prepare("PRAGMA user_version").get()!.user_version,5);db.close();
+ const db=new DatabaseSync(f.path);assert.equal(db.prepare("PRAGMA user_version").get()!.user_version,7);db.close();
 });
 for(const patch of [{approved:true},{authorization:{}},{transaction:new Uint8Array()},{privateKey:"invalid-field"},
  {cluster:"unsupported"},{programId:"invalid"},{simulation:"operational"},{feePayer:"invalid"}])

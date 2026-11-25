@@ -22,7 +22,7 @@ test("real schema-v5 execution lookup is read-only and existing trusted-observat
  assert.throws(()=>x.s.executionRecovery.applyObservation(fence,x.plan.attempt,r as any));
  assert.deepEqual(x.snapshot(),before);
  assert.equal(x.s.jobs.createOrGetJob("same_reserved_operation",x.plan.anchor.bindings).jobId,x.job.jobId);
- const db=new DatabaseSync(x.path);assert.equal(db.prepare("PRAGMA user_version").get()!.user_version,5);
+ const db=new DatabaseSync(x.path);assert.equal(db.prepare("PRAGMA user_version").get()!.user_version,7);
  assert.equal(db.prepare("PRAGMA journal_mode").get()!.journal_mode,"delete");db.close();
 });
 test("external worker revocation between reads forces reconciliation without mutating attempts or releasing uniqueness",async t=>{

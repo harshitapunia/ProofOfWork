@@ -67,7 +67,7 @@ for (const mode of ["before-insert", "during-insert", "after-insert", "before-pr
         }
         assert.equal(reopened.transactionIntents.getIntentHistory(value.intentId).length, mode === "recorded" || mode === "uncertain" ? 2 : 1);
       }
-      assert.equal(x.raw().prepare("PRAGMA user_version").get()!.user_version, 5);
+      assert.equal(x.raw().prepare("PRAGMA user_version").get()!.user_version, 7);
     } finally { clearTimeout(timer); if (c.exitCode === null && c.signalCode === null) c.kill("SIGKILL"); }
   });
 }

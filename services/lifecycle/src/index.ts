@@ -14,3 +14,5 @@ export type { OfflineTestEnvelope, OfflineTestObservationSource, OfflineTestMess
 // Pure data validation only; neither export creates authorization or worker claims.
 export { exact as assertOwnDataFields } from "./common.js";
 export { publicBindings as validateJobBindings } from "./job-model.js";
+
+export type {ApplicationTransaction,ApplicationTransactionState,ApplicationTransactionInput} from "./application-transactions.js";

@@ -95,6 +95,12 @@ export function apply(previous: JobMutable | undefined, event: readonly unknown[
     check(previous.generation < 2147483647, "job_exhausted");
     return {...next,state:"claimed",generation:previous.generation+1,workerId:event[1],verificationOutcome:"none",recoveryReason:null};
   }
+  if (event[0] === "controlled_claimed") {
+    check(event.length===3 && event[1]==="controlled_phantom"); identifier(event[2]);
+    check(["created","claimed","verification_running","verification_completed","authorization_pending","recovery_required"].includes(previous.state),"invalid_transition");
+    check(previous.generation<2147483647,"job_exhausted");
+    return {...next,state:"claimed",generation:previous.generation+1,workerId:"controlled_phantom",verificationOutcome:"none",recoveryReason:null};
+  }
   if (event[0] === "interrupted") {
     check(event.length === 2); identifier(event[1]);
     const reasons: Partial<Record<JobState,string>> = {claimed:"claim_interrupted",verification_running:"verification_interrupted",

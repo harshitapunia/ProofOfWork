@@ -1,3 +1,4 @@
+import type {ControlledAttestation} from "./controlled-attestation.js";
 import type { WorkflowVerification } from "./workflow-verification.js";
 import type { WorkflowStateReader } from "./workflow-state.js";
 import type { WalletExecutionReviewer } from "./devnet-wallet-review.js";
@@ -21,7 +22,7 @@ export interface ApplicationOptions {
   readonly service: Pick<VerifierService, "verify">;
   readonly chain?: ApplicationChainSource;
   readonly workflowState?: WorkflowStateReader;
-  readonly workflowVerification?: WorkflowVerification;
+  readonly workflowVerification?: WorkflowVerification | ControlledAttestation;
   readonly walletReview?: WalletExecutionReviewer;
 }
 export function applicationOrigin(value: string): URL {

@@ -11,7 +11,7 @@ test('browser paths and methods match exact backend dispatch for existing routes
   const prefix = routes.match(/const PREFIX = "([^"]+)";/)?.[1]; assert.equal(prefix, '/api/v1/');
   assert.equal(HEALTH_PATH, prefix + 'health');
   assert.equal(WORKFLOW_PATH, prefix + 'workflow/prepare');
-  assert.match(routes, /const preparation = path === PREFIX \+ "workflow\/prepare"/);
+  assert.match(routes, /const preparation = attestationAction!==undefined \|\| path === PREFIX \+ "workflow\/prepare"/);
   assert.match(routes, /if \(path === PREFIX \+ \"health\"\)/);
   const declaration = routes.match(/const auth = \[([^\]]+)\]\.includes\(path\);/)?.[1]; assert(declaration);
   const authPaths = [...declaration.matchAll(/PREFIX \+ "([^"]+)"/g)].map(m => prefix + m[1]);
@@ -41,6 +41,6 @@ test('wallet execution gate is explicit and browser has no automatic send or cus
  const source=files.map(f=>readFileSync('src/'+f,'utf8')).join('\n');
  assert.doesNotMatch(source,/sendRawTransaction|localStorage|sessionStorage|privateKey|secretKey|seedPhrase/);
  assert.match(readFileSync('src/wallet-execution.ts','utf8'),/LIVE_WALLET_EXECUTION = false/);
- assert.match(readFileSync('src/wallet-execution.ts','utf8'),/if\(!LIVE_WALLET_EXECUTION\)throw new Error\("live_execution_disabled"\)/);
+ assert.match(readFileSync('src/wallet-execution.ts','utf8'),/if\(review.liveExecution!==true\)throw new Error\("live_execution_disabled"\)/);
  assert.match(readFileSync('../../services/verifier/src/devnet-wallet-review.ts','utf8'),/async broadcast\(\):Promise<never>\{throw new WalletAuthError\("live_execution_disabled",403\);\}/);
 });

@@ -112,6 +112,6 @@ test("stored job metadata is rejected by existing process-local authorization/re
  }
  const methods=Object.keys(s.jobs).sort();
  assert.deepEqual(methods,["claimJob","createOrGetJob","getJob","getJobHistory","listRecoveryRequired","transitionJob"].sort());
- assert.deepEqual(Object.keys(s.jobRecovery),["interruptJob"]);
+ assert.deepEqual(Object.keys(s.jobRecovery).sort(),["claimControlled","interruptJob"]);
  assert.ok(Object.isFrozen(s.jobs)&&Object.isFrozen(s.jobRecovery));
 });

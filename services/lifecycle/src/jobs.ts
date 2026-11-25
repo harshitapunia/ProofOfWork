@@ -1,3 +1,4 @@
+import { activeApplicationAttempt } from "./application-transactions.js";
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { check, LifecycleError } from "./common.js";
@@ -13,6 +14,7 @@ export interface VerificationJobs {
   listRecoveryRequired(afterId?: string, limit?: number): Readonly<{entries:readonly RecoveryEntry[];nextAfter?:string}>;
 }
 export interface JobRecoveryControl {
+  claimControlled(id:string,identity:string,revision:number,approvalId:string,reopensJob?:string,reopensAttempt?:string):Readonly<{job:VerificationJob;claim:Readonly<JobClaim>}>;
   interruptJob(jobId: string, identity: string, expectedRevision: number, operatorId: string): VerificationJob;
 }
 export interface RecoveryEntry {
@@ -132,6 +134,25 @@ export function createVerificationJobs(transaction:JobTransaction):Readonly<{job
     },
   });
   const recovery:JobRecoveryControl=Object.freeze({
+    claimControlled(id:string,identityValue:string,revision:number,approvalId:string,reopensJob?:string,reopensAttempt?:string) {
+      lookupInput(id,identityValue,revision);identifier(approvalId);
+      return transaction(db=>{
+        const old=expected(db,id,identityValue,revision);
+        check(old.job.creationId.startsWith("controlled_"),"invalid_transition");
+        const prior=activeApplicationAttempt(db,"attest_milestone:"+old.job.bindings.milestone);
+        if(old.job.state==="created")check(!prior&&reopensJob===undefined&&reopensAttempt===undefined,"invalid_transition");
+        else {
+          check(reopensJob===id+":"+old.job.generation,"invalid_transition");
+          check(prior?prior.id===reopensAttempt&&prior.send_reserved===0
+            && ["signing_reserved","signed"].includes(prior.state as string)
+            && prior.approval_id!==approvalId:reopensAttempt===undefined,"application_attempt_not_reopenable");
+        }
+        check(!db.prepare("SELECT 1 FROM verification_job_history WHERE json_extract(event,'$[0]')='controlled_claimed' AND json_extract(event,'$[2]')=? LIMIT 1").get(approvalId)
+          && !db.prepare("SELECT 1 FROM application_transactions WHERE approval_id=? LIMIT 1").get(approvalId),"application_attempt_consumed");
+        const next=append(db,old,["controlled_claimed","controlled_phantom",approvalId]);
+        return Object.freeze({job:next,claim:Object.freeze({jobId:id,identity:next.identity,workerId:"controlled_phantom",generation:next.generation})});
+      });
+    },
     interruptJob(id:string,identityValue:string,revision:number,operatorId:string) {
       lookupInput(id,identityValue,revision);identifier(operatorId);
       return transaction(db=>append(db,expected(db,id,identityValue,revision),["interrupted",operatorId]));
