@@ -62,6 +62,8 @@ export function scopeDigest(v: unknown): string {
 }
 export interface ActionApproval {
   id: string;
+  reopensAttempt?: string;
+  reopensJob?: string;
   operationKey: string;
   scopeDigest: string;
   wallet: string;
@@ -85,7 +87,7 @@ export function approvalFile(path: string): () => Promise<RehearsalApproval> {
   return async () => {
     let handle;
     try {
-      handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       const st = await handle.stat();
       check(
         st.isFile() &&
@@ -138,6 +140,8 @@ export function parseApproval(v: unknown): RehearsalApproval {
       "expiresAt",
       "maxFeeLamports",
       "maxRentLamports",
+      ...(Object.hasOwn(x,"reopensAttempt") ? ["reopensAttempt"] : []),
+      ...(Object.hasOwn(x,"reopensJob") ? ["reopensJob"] : []),
     ]);
     check(
       typeof x.id === "string" &&
@@ -147,6 +151,9 @@ export function parseApproval(v: unknown): RehearsalApproval {
         x.operationKey.length <= 256 &&
         /^[a-f0-9]{64}$/.test(x.scopeDigest)
     );
+    const uuid="[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}";
+    if(Object.hasOwn(x,"reopensAttempt"))check(typeof x.reopensAttempt==="string"&&new RegExp("^"+uuid+"$").test(x.reopensAttempt));
+    if(Object.hasOwn(x,"reopensJob"))check(x.additionalSigner!==null&&typeof x.reopensJob==="string"&&new RegExp("^"+uuid+":[1-9][0-9]{0,9}$").test(x.reopensJob));
     key(x.wallet);
     if (x.additionalSigner !== null) {
       key(x.additionalSigner);
@@ -173,6 +180,13 @@ export interface ApprovedScope {
   fee: number;
   rent: number;
 }
+export type ApprovalSnapshot=ActionApproval & Pick<RehearsalApproval,"artifactSha256"|"upgradeAuthority">;
+export interface AttemptContext {
+  blockhash: string;
+  lastValidBlockHeight: number;
+  job?: {id:string; revision:number; generation:number};
+}
+type ExpiredLease = (lease: AttemptContext) => Promise<void>;
 export class ControlledActions {
   constructor(
     private readonly store: LifecycleStore,
@@ -183,8 +197,9 @@ export class ControlledActions {
   async configuration() {
     return parseApproval(await this.approvals());
   }
-  async approval(scope: ApprovedScope): Promise<ActionApproval> {
-    const a = (await this.configuration()).actions.find(
+  async approval(scope: ApprovedScope, configuration?: RehearsalApproval): Promise<ApprovalSnapshot> {
+    const config=configuration??await this.configuration();
+    const a = config.actions.find(
       (a) => a.operationKey === scope.operationKey
     );
     check(
@@ -197,47 +212,60 @@ export class ControlledActions {
     bounded(scope.fee);
     bounded(scope.rent);
     check(scope.fee <= a.maxFeeLamports && scope.rent <= a.maxRentLamports);
-    return Object.freeze(a);
+    return Object.freeze({...a,artifactSha256:config.artifactSha256,upgradeAuthority:config.upgradeAuthority});
+  }
+  async assertApproval(scope: ApprovedScope, expected?: ApprovalSnapshot) {
+    const current=await this.approval(scope);
+    if(expected)check(scopeDigest(current)===scopeDigest(expected),"approval_replaced");
+    return current;
+  }
+  private prior(scope: ApprovedScope, approval: ApprovalSnapshot) {
+    const prior=this.store.applicationTransactions.getForOperation(scope.operationKey);
+    if(!prior){check(approval.reopensAttempt===undefined,"attempt_unavailable");return;}
+    check(prior.id===approval.reopensAttempt&&prior.wallet===scope.wallet&&prior.scopeDigest===scope.scopeDigest
+      &&prior.approvalId!==approval.id&&!prior.sendReserved&&["signing_reserved","signed"].includes(prior.state),
+      "application_attempt_not_reopenable");
+    return prior;
+  }
+  async requireUnsent(scope: ApprovedScope, approval: ApprovalSnapshot, expire?: ExpiredLease) {
+    const prior=this.prior(scope,approval);
+    if(!prior)return;
+    // A wallet can have signed outside the browser callback. The durable fence proves
+    // no application send. The old message must also be invalid on finalized Devnet.
+    const lease=JSON.parse(prior.context) as AttemptContext;
+    check(expire&&typeof lease.blockhash==="string"&&Number.isSafeInteger(lease.lastValidBlockHeight)
+      &&lease.lastValidBlockHeight>=0,"recovery_evidence_unavailable");
+    await expire(lease);
   }
   async eligible(scope: ApprovedScope) {
-    try {
-      await this.approval(scope);
-      return !this.store.applicationTransactions.getForOperation(
-        scope.operationKey
-      );
-    } catch {
-      return false;
-    }
+    try { this.prior(scope,await this.approval(scope));return true; }
+    catch { return false; }
   }
-  /** Reserve BEFORE the browser is allowed to ask Phantom. No replacement message or automatic retry. */
+  /** Reserve before handing control to Phantom. Reopening appends a successor. */
   async reserve(
-    id: string,
-    scope: ApprovedScope,
-    message: Uint8Array,
-    assertActive = () => {}
+    id: string, scope: ApprovedScope, message: Uint8Array, assertActive = () => {},
+    options?: {expected:ApprovalSnapshot; context:AttemptContext; expire:ExpiredLease}
   ) {
-    const a = await this.approval(scope);
+    const expected=await this.assertApproval(scope,options?.expected);
+    await this.requireUnsent(scope,expected,options?.expire);
+    const a=options?await this.assertApproval(scope,expected):expected;
     check(this.now()<Date.parse(a.expiresAt));assertActive();
     return this.store.applicationTransactions.reserve({
-      id,
-      operationKey: scope.operationKey,
-      wallet: scope.wallet,
-      approvalId: a.id,
-      scopeDigest: scope.scopeDigest,
-      messageDigest: messageDigest(message),
-      context: "{}",
-    });
+      id,operationKey:scope.operationKey,wallet:scope.wallet,approvalId:a.id,
+      scopeDigest:scope.scopeDigest,messageDigest:messageDigest(message),context:JSON.stringify(options?{...options.context,approvalDigest:scopeDigest(a)}:{}),
+    },a.reopensAttempt);
   }
-  async current(id: string, scope: ApprovedScope, message: Uint8Array) {
-    const a = await this.approval(scope),
-      record = this.store.applicationTransactions.get(id);
+  async current(id: string, scope: ApprovedScope, message: Uint8Array,expected?:ApprovalSnapshot) {
+    const a = await this.assertApproval(scope,expected),
+      record = this.store.applicationTransactions.getForOperation(scope.operationKey);
     check(
-      record &&
+      record && record.id===id &&
         record.operationKey === scope.operationKey &&
         record.scopeDigest === scope.scopeDigest &&
         record.wallet === scope.wallet &&
         record.approvalId === a.id &&
-        record.messageDigest === messageDigest(message),
+        record.messageDigest === messageDigest(message)
+        && (JSON.parse(record.context).approvalDigest===undefined || JSON.parse(record.context).approvalDigest===scopeDigest(a)),
       "attempt_unavailable"
     );
     return record;
@@ -246,9 +274,12 @@ export class ControlledActions {
     id: string,
     scope: ApprovedScope,
     message: Uint8Array,
-    signature: string
+    signature: string,
+    expected?:ApprovalSnapshot,
+    assertActive=()=>{}
   ) {
-    const record = await this.current(id, scope, message);
+    const record = await this.current(id, scope, message,expected);
+    assertActive();
     if (record.state === "signing_reserved")
       return this.store.applicationTransactions.transition(
         id,
@@ -269,11 +300,12 @@ export class ControlledActions {
     message: Uint8Array,
     wire: Uint8Array,
     signature: string,
-    assertActive = () => {}
+    assertActive = () => {},
+    expected?:ApprovalSnapshot
   ) {
-    const record = await this.signed(id, scope, message, signature);
+    const record = await this.signed(id, scope, message, signature,expected,assertActive);
     check(!record.sendReserved, "attempt_consumed");
-    const approval=await this.approval(scope);check(approval.id===record.approvalId,"approval_replaced");check(this.now()<Date.parse(approval.expiresAt));assertActive();
+    const approval=await this.assertApproval(scope,expected);check(approval.id===record.approvalId,"approval_replaced");check(this.now()<Date.parse(approval.expiresAt));assertActive();
     this.store.applicationTransactions.transition(
       id,
       record.revision,

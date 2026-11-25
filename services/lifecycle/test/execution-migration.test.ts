@@ -29,7 +29,7 @@ test("genuine populated v4 migrates through v5 to v6 preserving every reservatio
   const db=x.raw(),tables=["counters","reservations","history","verification_jobs","verification_job_history",
     "verification_offline_handoffs","transaction_intents","transaction_intent_history"];
   const rows=()=>tables.map(t=>db.prepare("SELECT * FROM "+t+" ORDER BY rowid").all()),before=rows();
-  const s=x.store();assert.deepEqual(rows(),before);assert.equal(db.prepare("PRAGMA user_version").get()!.user_version,6);
+  const s=x.store();assert.deepEqual(rows(),before);assert.equal(db.prepare("PRAGMA user_version").get()!.user_version,7);
   assert.equal(s.reserveInternship(b.sponsor).value,9007199254740994n);
   assert.equal(s.transactionIntents.getIntent(i.intentId)!.state,"reconciliation_required");
   assert.equal(s.executionAttempts.list().length,0);

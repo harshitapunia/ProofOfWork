@@ -71,6 +71,20 @@ function valid(v: ApplicationTransactionInput) {
   );
   JSON.parse(v.context);
 }
+/** The logical operation remains stable across immutable historical attempts. */
+export function activeApplicationAttempt(db: DatabaseSync, key: string) {
+  return db.prepare(`SELECT t.id,t.wallet,t.scope_digest,t.send_reserved,t.state,t.approval_id
+    FROM application_transactions t LEFT JOIN application_attempt_successors prev ON prev.next_id=t.id
+    WHERE COALESCE(prev.operation_key,t.operation_key)=?
+      AND NOT EXISTS(SELECT 1 FROM application_attempt_successors next WHERE next.previous_id=t.id)`).get(key);
+}
+function assertJobCurrent(db: DatabaseSync, context: string) {
+  const job = JSON.parse(context).job;
+  if (job === undefined) return;
+  const row=db.prepare("SELECT revision,generation,state FROM verification_jobs WHERE job_id=?").get(job.id);
+  check(row?.revision===job.revision && row?.generation===job.generation
+    && row?.state==="authorization_pending", "stale_worker");
+}
 export function createApplicationTransactions(
   transaction: <T>(fn: (db: DatabaseSync) => T, write?: boolean) => T
 ) {
@@ -79,12 +93,13 @@ export function createApplicationTransactions(
     id: string
   ): ApplicationTransaction | undefined => {
     const x = db
-      .prepare("SELECT * FROM application_transactions WHERE id=?")
+      .prepare(`SELECT t.*, COALESCE(p.operation_key,t.operation_key) AS logical_key
+        FROM application_transactions t LEFT JOIN application_attempt_successors p ON p.next_id=t.id WHERE t.id=?`)
       .get(id);
     if (!x) return undefined;
     const v: ApplicationTransaction = {
       id: x.id as string,
-      operationKey: x.operation_key as string,
+      operationKey: x.logical_key as string,
       wallet: x.wallet as string,
       approvalId: x.approval_id as string,
       messageDigest: x.message_digest as string,
@@ -136,22 +151,21 @@ export function createApplicationTransactions(
     return Object.freeze(v);
   };
   return Object.freeze({
-    reserve(input: ApplicationTransactionInput): ApplicationTransaction {
+    reserve(input: ApplicationTransactionInput, previousId?: string): ApplicationTransaction {
       valid(input);
       return transaction((db) => {
-        check(
-          !db
-            .prepare(
-              "SELECT id FROM application_transactions WHERE operation_key=? OR approval_id=? OR id=?"
-            )
-            .get(input.operationKey, input.approvalId, input.id),
-          "application_attempt_consumed"
-        );
+        assertJobCurrent(db,input.context);
+        const previous=activeApplicationAttempt(db,input.operationKey);
+        if(previousId===undefined)check(!previous,"application_attempt_consumed");
+        else check(previous && previous.id===previousId && previous.wallet===input.wallet
+          && previous.scope_digest===input.scopeDigest && previous.send_reserved===0
+          && ["signing_reserved","signed"].includes(previous.state as string),"application_attempt_not_reopenable");
+        check(!db.prepare("SELECT id FROM application_transactions WHERE approval_id=? OR id=?").get(input.approvalId,input.id),"application_attempt_consumed");
         db.prepare(
           "INSERT INTO application_transactions VALUES(?,?,?,?,?,?,?,?,?,'signing_reserved',NULL,0,0)"
         ).run(
           input.id,
-          input.operationKey,
+          previousId===undefined ? input.operationKey : input.operationKey+"#"+input.id,
           input.wallet,
           input.approvalId,
           input.messageDigest,
@@ -160,6 +174,8 @@ export function createApplicationTransactions(
           digest(input.context),
           "application-v1"
         );
+        if(previousId!==undefined)db.prepare("INSERT INTO application_attempt_successors VALUES(?,?,?)")
+          .run(previousId,input.id,input.operationKey);
         return read(db, input.id)!;
       });
     },
@@ -168,11 +184,7 @@ export function createApplicationTransactions(
     },
     getForOperation(key: string) {
       return transaction((db) => {
-        const x = db
-          .prepare(
-            "SELECT id FROM application_transactions WHERE operation_key=?"
-          )
-          .get(key);
+        const x=activeApplicationAttempt(db,key);
         return x ? read(db, x.id as string) : undefined;
       }, false);
     },
@@ -185,6 +197,8 @@ export function createApplicationTransactions(
       return transaction((db) => {
         const old = read(db, id);
         check(old && old.revision === revision, "conflict");
+        check(activeApplicationAttempt(db,old.operationKey)?.id===id,"application_attempt_superseded");
+        if(to==="signed"||to==="send_reserved")assertJobCurrent(db,old.context);
         const allowed: Record<
           ApplicationTransactionState,
           ApplicationTransactionState[]

@@ -1,3 +1,4 @@
+import {admitContributorWithDeadline} from "../src/workflow-verification.js";
 import {LifecycleStore} from "@proofwork/lifecycle";
 import {ControlledActions,parseApproval,scopeDigest} from "../src/controlled-actions.js";
 import {ControlledAttestation,attestationScope} from "../src/controlled-attestation.js";
@@ -22,7 +23,7 @@ import {walletLedgerFixture} from "./wallet-ledger-helpers.js";
 import {manifest} from "./helpers.js";
 import {parseManifest} from "../src/manifest.js";
 import {APPLICATION_API_VERSION} from "../src/application-api-contracts.js";
-import {ReadOnlyWalletRpc,WalletExecutionReviewer,observeDeployment,UPGRADEABLE_LOADER,type WalletOperation} from "../src/devnet-wallet-review.js";
+import {ReadOnlyWalletRpc,WalletExecutionReviewer,observeDeployment,validTransactionError,UPGRADEABLE_LOADER,type WalletOperation} from "../src/devnet-wallet-review.js";
 const envelope={apiVersion:APPLICATION_API_VERSION,cluster:"devnet"};
 function fixture(t:TestContext,op:WalletOperation="create_internship"){
  const sponsor=Keypair.generate(),student=Keypair.generate(),verifier=Keypair.generate(),sw=sponsor.publicKey.toBase58(),st=student.publicKey.toBase58();
@@ -93,7 +94,7 @@ test("expired lease and substituted signed transaction are rejected without broa
 test("status signatures, failures and wrong account postconditions never become confirmed",async t=>{
  const f=fixture(t),r=await f.reviewer.review(f.input,f.wallet.publicKey.toBase58()),tx=Transaction.populate(Message.from(Buffer.from(r.messageBase64!,"base64")));tx.sign(f.wallet);const wire=tx.serialize().toString("base64");
  assert.equal((await f.reviewer.confirm(r.reviewId!,r.wallet,wire)).state,"unknown");
- f.responses.getSignatureStatuses={context:{slot:200},value:[{slot:200,confirmationStatus:"confirmed",err:{InstructionError:[0,"Custom"]}}]};assert.equal((await f.reviewer.confirm(r.reviewId!,r.wallet,wire)).state,"failed");
+ f.responses.getSignatureStatuses={context:{slot:200},value:[{slot:200,confirmationStatus:"confirmed",err:{InstructionError:[0,{Custom:6000}]}}]};assert.equal((await f.reviewer.confirm(r.reviewId!,r.wallet,wire)).state,"failed");
  f.responses.getSignatureStatuses.value[0].err=null;f.responses.getTransaction={slot:200,meta:{err:null},transaction:[wire,"base64"]};
  assert.equal((await f.reviewer.confirm(r.reviewId!,r.wallet,wire)).state,"unknown"); // status without actual initialized account is insufficient
  f.accounts.set(f.b.internship,f.originalParent); // Reuse the existing valid account fixture for the observed postcondition.
@@ -111,7 +112,12 @@ for(const op of ["create_milestone","fund_milestone","assign_student","submit_mi
  const tx=Transaction.populate(Message.from(Buffer.from(r.messageBase64!,"base64")));tx.sign(f.wallet);const wire=tx.serialize().toString("base64");
  f.responses.getSignatureStatuses={context:{slot:200},value:[{slot:200,confirmationStatus:"confirmed",err:null}]};f.responses.getTransaction={slot:200,meta:{err:null},transaction:[wire,"base64"]};
  if(op==="create_milestone")f.accounts.set(f.b.milestone,f.wrap(PROGRAM_ID,f.m));
- if(op==="fund_milestone"){f.m[272]=1;f.accounts.set(f.b.milestone,f.wrap(PROGRAM_ID,f.m));f.accounts.set(f.vault,f.token(deriveVaultAuthority(f.b.milestone)[0].toBase58(),10n));f.accounts.set(f.ata,f.token(f.terms.sponsor,990n));}
+ if(op==="fund_milestone"){
+  const index=tx.compileMessage().accountKeys.findIndex(k=>k.toBase58()===f.ata);
+  const tokenRow=(amount:string)=>({accountIndex:index,owner:f.terms.sponsor,mint:DEMO_MINT,uiTokenAmount:{amount,decimals:6}});
+  f.responses.getTransaction.meta.preTokenBalances=[tokenRow("1100")];
+  f.responses.getTransaction.meta.postTokenBalances=[tokenRow("1090")];
+  f.m[272]=1;f.accounts.set(f.b.milestone,f.wrap(PROGRAM_ID,f.m));f.accounts.set(f.vault,f.token(deriveVaultAuthority(f.b.milestone)[0].toBase58(),10n));f.accounts.set(f.ata,f.token(f.terms.sponsor,1130n));}
  if(op==="assign_student"){f.m[272]=2;f.student.publicKey.toBuffer().copy(f.m,72);f.accounts.set(f.b.milestone,f.wrap(PROGRAM_ID,f.m));}
  if(op==="submit_milestone"){
   f.m[272]=3;new PublicKey(f.b.submission).toBuffer().copy(f.m,168);f.accounts.set(f.b.milestone,f.wrap(PROGRAM_ID,f.m));
@@ -223,7 +229,7 @@ async function controlledWallet(t:TestContext,transport:"ok"|"timeout"|"wrong"="
  let configuration=approvalConfiguration(action),sends=0;const actions=new ControlledActions(f.store,async()=>configuration,async(url,init)=>{assert.equal(url,"https://api.devnet.solana.com");const body=JSON.parse(String(init?.body));assert.equal(body.method,"sendTransaction");assert.deepEqual(body.params[1],{encoding:"base64",skipPreflight:false,preflightCommitment:"confirmed",maxRetries:0});sends++;if(transport==="timeout")throw Error("uncertain transport");return Response.json({jsonrpc:"2.0",id:body.id,result:transport==="wrong"?"wrong":(await import("../src/devnet-execution.js")).transactionId(Transaction.from(Buffer.from(body.params[0],"base64")).signatures[0]!.signature!)});});
  fixtureArtifactApproval(actions,f.artifact.sha256);const reviewer=new WalletExecutionReviewer(f.rpc,async()=>f.artifact,()=>Date.now(),actions),review=await reviewer.review(f.input,preview.wallet);
  const tx=Transaction.populate(Message.from(Buffer.from(review.messageBase64!,"base64")));tx.sign(f.wallet);const wire=tx.serialize().toString("base64");
- return {...f,reviewer,review,wire,actions,action,revoke:()=>{configuration={...configuration,actions:[]};},sends:()=>sends};
+ return {...f,reviewer,review,wire,actions,action,setApproval:(next:unknown)=>{configuration=approvalConfiguration(next);},revoke:()=>{configuration={...configuration,actions:[]};},sends:()=>sends};
 }
 test("approved wallet path reserves before Phantom and submits once without broad RPC capability",async t=>{
  const f=await controlledWallet(t);assert.equal(f.review.liveExecution,true);assert.equal(f.sends(),0);await f.reviewer.authorize(f.review.reviewId!,f.review.wallet);
@@ -244,6 +250,12 @@ for(const field of ["wallet","scopeDigest","maxFeeLamports","maxRentLamports","e
  const f=fixture(t),preview=await f.reviewer.review(f.input,f.wallet.publicKey.toBase58());const a:any={id:"synthetic-action",operationKey:preview.operationKey,scopeDigest:preview.scopeDigest,wallet:preview.wallet,additionalSigner:null,expiresAt:new Date(Date.now()+60000).toISOString(),maxFeeLamports:5000,maxRentLamports:1000000};
  a[field]=field==="wallet"?f.student.publicKey.toBase58():field==="scopeDigest"?"00".repeat(32):field==="expiresAt"?new Date(0).toISOString():0;
  const actions=new ControlledActions(f.store,async()=>approvalConfiguration(a),async()=>{throw Error("must not send");}),reviewer=new WalletExecutionReviewer(f.rpc,async()=>f.artifact,()=>Date.now(),fixtureArtifactApproval(actions,f.artifact.sha256)),review=await reviewer.review(f.input,preview.wallet);assert.equal(review.liveExecution,false);await assert.rejects(reviewer.authorize(review.reviewId!,preview.wallet));
+ const tx=Transaction.populate(Message.from(Buffer.from(review.messageBase64!,"base64")));
+ tx.partialSign(f.wallet);
+ const wire=tx.serialize().toString("base64");
+ assert.equal(await reviewer.acceptSignature(review.reviewId!,preview.wallet,wire),reviewer.validateSigned(review.reviewId!,preview.wallet,wire).signature);
+ assert.equal(f.store.applicationTransactions.getForOperation(review.operationKey!),undefined);
+
 });
 async function controlledAttestation(t:TestContext,fail=false){
  const f=fixture(t,"submit_milestone"),payer=Keypair.generate(),payerKey=payer.publicKey.toBase58(),student=f.student.publicKey.toBase58(),verifier=f.terms.verifier;
@@ -251,11 +263,11 @@ async function controlledAttestation(t:TestContext,fail=false){
  const chain=new DevnetAttestationReader("https://api.devnet.solana.com",verifier,async(_url,init)=>{const body=JSON.parse(String(init?.body));return Response.json({result:await f.rpc.call(body.method,body.params)});});
  const initial=await chain.read(f.b.milestone),action={id:"synthetic-attestation",operationKey:"attest_milestone:"+f.b.milestone,scopeDigest:attestationScope(initial,payerKey),wallet:payerKey,additionalSigner:verifier,expiresAt:new Date(Date.now()+60000).toISOString(),maxFeeLamports:5000,maxRentLamports:0};
  const store=new LifecycleStore(join(f.dir,"controlled.sqlite"));t.after(()=>store.close());
- let sends=0,time=0;const actions=new ControlledActions(store,async()=>approvalConfiguration(action),async(_url,init)=>{sends++;const body=JSON.parse(String(init?.body)),tx=Transaction.from(Buffer.from(body.params[0],"base64"));assert(tx.verifySignatures());return Response.json({jsonrpc:"2.0",id:body.id,result:(await import("../src/devnet-execution.js")).transactionId(tx.signatures[0]!.signature!)});});
- fixtureArtifactApproval(actions,f.artifact.sha256);const service=new VerifierService(new GitHub(githubFetch()),chain,{run:async()=>CASES.map(c=>({id:c.id,passed:!fail}))});
- const reader=new WorkflowStateReader(f.rpc,"offline_fixture"),coordinator=new ControlledAttestation(reader,store,service,chain,actions,async()=>TOKEN,f.rpc,{read:async()=>({rpc:"https://api.devnet.solana.com",genesisHash:SETTLEMENT_DEVNET_GENESIS,blockhash:f.responses.getLatestBlockhash.value.blockhash,lastValidBlockHeight:500,currentBlockHeight:100,observedAtMs:time,valid:true})},async()=>f.artifact,()=>time);
+ let sends=0,time=0,runs=0,runnerGate:(()=>Promise<void>)|undefined,lastWire:string|undefined,configuration=approvalConfiguration(action);const actions=new ControlledActions(store,async()=>configuration,async(_url,init)=>{sends++;const body=JSON.parse(String(init?.body)),tx=Transaction.from(Buffer.from(body.params[0],"base64"));assert(tx.verifySignatures());lastWire=body.params[0];return Response.json({jsonrpc:"2.0",id:body.id,result:(await import("../src/devnet-execution.js")).transactionId(tx.signatures[0]!.signature!)});});
+ fixtureArtifactApproval(actions,f.artifact.sha256);const service=()=>new VerifierService(new GitHub(githubFetch()),chain,{run:async()=>{runs++;if(runnerGate)await runnerGate();return CASES.map(c=>({id:c.id,passed:!fail}));}});
+ const reader=new WorkflowStateReader(f.rpc,"offline_fixture"),makeCoordinator=(admit:()=>Promise<string>=async()=>TOKEN)=>new ControlledAttestation(reader,store,service(),chain,actions,admit,f.rpc,{read:async()=>({rpc:"https://api.devnet.solana.com",genesisHash:SETTLEMENT_DEVNET_GENESIS,blockhash:f.responses.getLatestBlockhash.value.blockhash,lastValidBlockHeight:500,currentBlockHeight:100,observedAtMs:time,valid:true})},async()=>f.artifact,()=>time);
  const input={...envelope,sponsor:f.terms.sponsor,internshipId:f.terms.internshipId,milestoneId:f.terms.milestoneId,evidence:{manifestBase64:Buffer.from(f.terms.manifest).toString("base64"),milestone:f.b.milestone,student,repositoryId:"1001",owner:f.terms.owner,repository:f.terms.repository,...f.workflow.evidence}};
- return {...f,store,actions,payer,student,verifier,coordinator,input,sends:()=>sends,expire:()=>{time=30000;}};
+ return {...f,store,actions,payer,student,verifier,coordinator:makeCoordinator(),makeCoordinator,action,setApproval:(next:unknown)=>{configuration=approvalConfiguration(next);},runs:()=>runs,holdRunner:(hook:()=>Promise<void>)=>{runnerGate=hook;},lastWire:()=>lastWire,input,sends:()=>sends,expire:()=>{time=30000;}};
 }
 test("trusted verifier failure never exposes a Phantom attestation message",async t=>{const f=await controlledAttestation(t,true),job=await f.coordinator.dispatch(f.input,f.student,()=>{});await f.coordinator.drain();await assert.rejects(f.coordinator.review(job.jobId,f.verifier));assert.equal(f.sends(),0);assert.equal(f.store.jobs.getJob(job.jobId)!.verificationOutcome,"rejected");});
 test("attestation allows only both explicit roles, requires their signatures and rejects expiry",async t=>{
@@ -273,8 +285,34 @@ test("two independently partial-signed messages merge, verify and submit exactly
  // Retrieve the exact message through the same base58 representation supplied to Phantom.
  const alphabet="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";let number=0n;for(const c of review.messageBase58)number=number*58n+BigInt(alphabet.indexOf(c));let h=number.toString(16);if(h.length%2)h="0"+h;const leading=review.messageBase58.length-review.messageBase58.replace(/^1+/,"").length;const bytes=Buffer.concat([Buffer.alloc(leading),Buffer.from(h,"hex")]);
 
- for(const signer of [f.verifierKeypair,f.payer]){const wallet=signer.publicKey.toBase58();await f.coordinator.authorize(job.jobId,wallet,()=>{});const tx=Transaction.populate(Message.from(bytes));tx.partialSign(signer);const out=await f.coordinator.validate(job.jobId,wallet,tx.serialize({requireAllSignatures:false,verifySignatures:false}).toString("base64"));assert(out.signatureCount>=1);}
+ const payerReview=await f.coordinator.review(job.jobId,payer);
+ assert.equal(payerReview.reviewId,review.reviewId);
+ for(const signer of [f.verifierKeypair,f.payer]){
+   const wallet=signer.publicKey.toBase58();
+   await f.coordinator.authorize(job.jobId,wallet,()=>{});
+   const tx=Transaction.populate(Message.from(bytes));
+   tx.partialSign(signer);
+   const wire=tx.serialize({requireAllSignatures:false,verifySignatures:false}).toString("base64");
+   if(wallet===payer){
+     const injected=t.mock.method(f.actions,"signed",async()=>{throw Error("synthetic recording failure");});
+     await assert.rejects(f.coordinator.validate(job.jobId,wallet,wire),/synthetic recording failure/);
+     assert.equal((await f.coordinator.review(job.jobId,payer)).signatureCount,1);
+     await assert.rejects(f.coordinator.broadcast(job.jobId,payer,()=>{}));
+     assert.equal(f.sends(),0);
+     injected.mock.restore();
+   }
+   const out=await f.coordinator.validate(job.jobId,wallet,wire);
+   assert.equal(out.signatureCount,wallet===payer?2:1);
+ }
  assert.equal((await f.coordinator.review(job.jobId,payer)).signatureCount,2);assert.equal((await f.coordinator.broadcast(job.jobId,payer,()=>{})).state,"submitted");assert.equal(f.sends(),1);await assert.rejects(f.coordinator.broadcast(job.jobId,payer,()=>{}));assert.equal(f.sends(),1);
+ const wire=f.lastWire()!;
+ f.responses.getSignatureStatuses={context:{slot:200},value:[{slot:200,confirmationStatus:"confirmed",err:false}]};
+ f.responses.getTransaction={slot:200,transaction:[wire,"base64"],meta:{err:false}};
+ assert.equal((await f.coordinator.confirm(job.jobId,payer)).state,"unknown");
+ const error={InstructionError:[0,{Custom:6000}]};
+ f.responses.getSignatureStatuses.value[0].err=error;
+ f.responses.getTransaction.meta.err=error;
+ assert.equal((await f.coordinator.confirm(job.jobId,payer)).state,"failed");
 });
 
 test("job-generation revocation during final approval IO prevents human signing authorization",async t=>{
@@ -298,4 +336,101 @@ test("revoked signer session during partial validation cannot leave a usable sig
  const f=await controlledAttestation(t),job=await f.coordinator.dispatch(f.input,f.student,()=>{});await f.coordinator.drain();const review=await f.coordinator.review(job.jobId,f.verifier);await f.coordinator.authorize(job.jobId,f.verifier,()=>{});
  const alphabet="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";let n=0n;for(const c of review.messageBase58)n=n*58n+BigInt(alphabet.indexOf(c));let h=n.toString(16);if(h.length%2)h="0"+h;const bytes=Buffer.from(h,"hex"),tx=Transaction.populate(Message.from(bytes));tx.partialSign(f.verifierKeypair);
  await assert.rejects(f.coordinator.validate(job.jobId,f.verifier,tx.serialize({requireAllSignatures:false,verifySignatures:false}).toString("base64"),()=>{throw Error("session revoked");}));assert.equal((await f.coordinator.review(job.jobId,f.verifier)).signatureCount,0);assert.equal(f.sends(),0);
+});
+
+function expirePreviousLease(f:ReturnType<typeof fixture>){
+ const original=f.rpc.call.bind(f.rpc);
+ f.rpc.call=async(method,params=[],signal)=>{
+  if((params[0] as any)?.commitment==="finalized" && method==="getBlockHeight")return 501;
+  if((params[1] as any)?.commitment==="finalized" && method==="isBlockhashValid")return {context:{slot:300},value:false};
+  return original(method,params,signal);
+ };
+ f.responses.getLatestBlockhash.value.blockhash=new PublicKey(Buffer.alloc(32,8)).toBase58();
+ f.responses.getLatestBlockhash.value.lastValidBlockHeight=800;
+}
+for(const stopped of ["wallet rejection","approval expiry","browser interruption","signed and not submitted"] as const)test("operator reopens a proven app-unsent operation after "+stopped,async t=>{
+ const f=await controlledWallet(t),id=f.review.reviewId!,wallet=f.review.wallet;
+ await f.reviewer.authorize(id,wallet);
+ if(stopped==="signed and not submitted")await f.reviewer.acceptSignature(id,wallet,f.wire);
+ assert.equal(f.store.applicationTransactions.get(id)?.state,stopped==="signed and not submitted"?"signed":"signing_reserved");
+ if(stopped==="approval expiry")f.setApproval({...f.action,expiresAt:new Date(0).toISOString()});
+ const reopened=new LifecycleStore(join(f.dir,"ledger.sqlite"));t.after(()=>reopened.close());
+ assert.equal(reopened.applicationTransactions.get(id)?.sendReserved,false);
+ const restart=new WalletExecutionReviewer(f.rpc,async()=>f.artifact,()=>Date.now(),f.actions);
+ assert.equal((await restart.review(f.input,wallet)).liveExecution,false);
+ f.setApproval({...f.action,id:"replacement",reopensAttempt:id});
+ const stillLive=await restart.review(f.input,wallet);
+ await assert.rejects(restart.authorize(stillLive.reviewId!,wallet),{code:"previous_message_still_live"});
+ expirePreviousLease(f);
+ const fresh=await restart.review(f.input,wallet);assert.equal(fresh.liveExecution,true);
+ await restart.authorize(fresh.reviewId!,wallet);
+ assert.equal(reopened.applicationTransactions.getForOperation(f.action.operationKey)?.id,fresh.reviewId);
+ assert.equal(reopened.applicationTransactions.get(id)?.sendReserved,false);
+ await assert.rejects(f.reviewer.submission(id,wallet,f.wire));assert.equal(f.sends(),0);
+ const tx=Transaction.populate(Message.from(Buffer.from(fresh.messageBase64!,"base64")));tx.sign(f.wallet);
+ const wire=tx.serialize().toString("base64");
+ assert.equal((await restart.submission(fresh.reviewId!,wallet,wire)).state,"submitted");
+ await assert.rejects(restart.submission(fresh.reviewId!,wallet,wire));assert.equal(f.sends(),1);
+});
+test("reopening an uncertain send is refused even when finalized expiry is proven",async t=>{
+ const f=await controlledWallet(t,"timeout"),id=f.review.reviewId!,wallet=f.review.wallet;
+ await f.reviewer.authorize(id,wallet);assert.equal((await f.reviewer.submission(id,wallet,f.wire)).state,"unknown");
+ expirePreviousLease(f);f.setApproval({...f.action,id:"replacement",reopensAttempt:id});
+ const fresh=await f.reviewer.review(f.input,wallet);
+ assert.equal(fresh.liveExecution,false);await assert.rejects(f.reviewer.authorize(fresh.reviewId!,wallet),{code:"application_attempt_not_reopenable"});
+ assert.equal(f.store.applicationTransactions.getForOperation(f.action.operationKey)?.id,id);assert.equal(f.sends(),1);
+});
+test("ordinary authorization rejects approval replacement during async account checks",async t=>{
+ const f=await controlledWallet(t);const original=f.rpc.call.bind(f.rpc);
+ let changed=false;f.rpc.call=async(method,params=[],signal)=>{
+  if(!changed&&method==="getFeeForMessage"){changed=true;f.setApproval({...f.action,id:"replacement"});}
+  return original(method,params,signal);
+ };
+ await assert.rejects(f.reviewer.authorize(f.review.reviewId!,f.review.wallet),{code:"approval_replaced"});
+ assert.equal(f.store.applicationTransactions.get(f.review.reviewId!),undefined);assert.equal(f.sends(),0);
+});
+test("expired operator approval after admission never runs the trusted verifier",async t=>{
+ const f=await controlledAttestation(t);
+ const coordinator=f.makeCoordinator(async()=>{f.setApproval({...f.action,expiresAt:new Date(0).toISOString()});return TOKEN;});
+ await assert.rejects(coordinator.dispatch(f.input,f.student,()=>{}));await coordinator.drain();assert.equal(f.runs(),0);assert.equal(f.sends(),0);
+});
+test("credential admission deadline refuses a hung loader and permits a later healthy request",async()=>{
+ const binding={milestone:"fixture",student:"fixture",repositoryId:"1",contributorId:"2",commit:"fixture"};
+ await assert.rejects(admitContributorWithDeadline(()=>new Promise(()=>{}),binding,10),{code:"verification_admission_unavailable"});
+ assert.equal(await admitContributorWithDeadline(async()=>TOKEN,binding,10),TOKEN);
+});
+test("attestation restart after verification requires explicit new approval and reruns trusted verification",async t=>{
+ const f=await controlledAttestation(t),initial=await f.coordinator.dispatch(f.input,f.student,()=>{});
+ await f.coordinator.drain();assert.equal(f.runs(),1);f.expire();
+ const restart=f.makeCoordinator();
+ await assert.rejects(restart.review(initial.jobId,f.verifier));
+ assert.equal((await restart.dispatch(f.input,f.student,()=>{})).generation,initial.generation);assert.equal(f.runs(),1);
+ f.setApproval({...f.action,id:"renewed-attestation",reopensJob:initial.jobId+":"+initial.generation});
+ const fresh=await restart.dispatch(f.input,f.student,()=>{});await restart.drain();
+ assert.equal(fresh.jobId,initial.jobId);assert.equal(fresh.generation,initial.generation!+1);assert.equal(f.runs(),2);
+ assert.equal((await restart.review(fresh.jobId,f.verifier)).signatureCount,0);
+ await assert.rejects(f.coordinator.authorize(initial.jobId,f.verifier,()=>{}));assert.equal(f.sends(),0);
+ assert.deepEqual(f.store.jobs.getJobHistory(initial.jobId).filter(e=>e.event[0]==="controlled_claimed").map(e=>e.event[2]),[f.action.id,"renewed-attestation"]);
+});
+test("only valid Solana error evidence can classify an RPC response as failed",()=>{
+ for(const value of [false,true,0,[],{},undefined,"arbitrary",{InstructionError:[-1,"Custom"]},{InstructionError:[0,false]}])
+  assert.equal(validTransactionError(value),false);
+ for(const value of [null,"BlockhashNotFound",{InstructionError:[0,{Custom:6000}]}])
+  assert.equal(validTransactionError(value),true);
+});
+
+test("an interrupted attestation preparation is fenced by a new durable generation",async t=>{
+ const f=await controlledAttestation(t);let entered!:()=>void,release!:()=>void;
+ const started=new Promise<void>(r=>entered=r),pending=new Promise<void>(r=>release=r);
+ f.holdRunner(async()=>{if(f.runs()===1){entered();await pending;}});
+ const initial=await f.coordinator.dispatch(f.input,f.student,()=>{});await started;
+ assert.equal(f.store.jobs.getJob(initial.jobId)?.state,"verification_running");
+ const restart=f.makeCoordinator();
+ f.setApproval({...f.action,id:"recover-preparation",reopensJob:initial.jobId+":"+initial.generation});
+ try{
+  const successor=await restart.dispatch(f.input,f.student,()=>{});await restart.drain();
+  assert.equal(successor.generation,initial.generation!+1);
+ }finally{release();await f.coordinator.drain();}
+ assert.equal(f.runs(),2);await assert.rejects(f.coordinator.review(initial.jobId,f.verifier));
+ assert.equal((await restart.review(initial.jobId,f.verifier)).signatureCount,0);assert.equal(f.sends(),0);
 });

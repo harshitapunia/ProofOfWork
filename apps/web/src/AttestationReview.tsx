@@ -75,7 +75,7 @@ export function AttestationReview({
         await request(
           "/api/v1/attestation/authorize",
           "wallet_execution_authorization",
-          body
+          {...body,reviewId:review.reviewId}
         );
         check(review, n);
         const wire = await requestPhantomTransaction(getWallet(), review);
@@ -86,7 +86,7 @@ export function AttestationReview({
         const result = await request<{ signatureCount: number }>(
           "/api/v1/attestation/validate",
           "attestation_signature",
-          { ...body, wireBase64 }
+          { ...body, reviewId:review.reviewId, wireBase64 }
         );
         check(review, n);
         setReview({ ...review, signatureCount: result.data.signatureCount });
@@ -101,7 +101,7 @@ export function AttestationReview({
         const result = await request<{ state: string; signature: string }>(
           "/api/v1/attestation/broadcast",
           "wallet_execution_submission",
-          body
+          {...body,reviewId:review.reviewId}
         );
         if (n === generation.current)
           setStatus(

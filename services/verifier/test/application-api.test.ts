@@ -209,7 +209,7 @@ test("schema v5 and read-only capability isolation are preserved", async t => {
   assert.throws(() => f.s.executionAttempts.recordSubmissionIntent(f.claim, f.job.revision,
     { attemptId: f.attempt.attemptId, identity: f.attempt.identity, revision: f.attempt.revision }, r.body));
   assert.deepEqual(f.snapshot(), before); const db = new DatabaseSync(f.path, { readOnly: true });
-  try { assert.equal(db.prepare("PRAGMA user_version").get()!.user_version, 6); assert.equal(db.prepare("PRAGMA journal_mode").get()!.journal_mode, "delete"); }
+  try { assert.equal(db.prepare("PRAGMA user_version").get()!.user_version, 7); assert.equal(db.prepare("PRAGMA journal_mode").get()!.journal_mode, "delete"); }
   finally { db.close(); }
 });
 test("health is non-sensitive and probes neither storage nor chain", () => {

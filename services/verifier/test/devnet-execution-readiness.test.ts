@@ -162,7 +162,7 @@ test("restart, partial history and original v4 reconciliation hold remain non-op
     assert.deepEqual(f.snapshot(), before); disabled(r);
   } finally { reopened.close(); }
   const db = new DatabaseSync(f.path, { readOnly: true }); try {
-    assert.equal(db.prepare("PRAGMA user_version").get()!.user_version, 6);
+    assert.equal(db.prepare("PRAGMA user_version").get()!.user_version, 7);
     assert.equal(db.prepare("PRAGMA journal_mode").get()!.journal_mode, "delete");
   } finally { db.close(); }
 });

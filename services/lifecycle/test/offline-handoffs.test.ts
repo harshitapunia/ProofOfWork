@@ -20,7 +20,7 @@ test("genuine v2 records and hash-chained job histories survive transactional v3
   const { job, claim } = pending(old), history = old.jobs.getJobHistory(job.jobId);
   old.close();
   const s = x.store();
-  assert.equal(x.raw().prepare("PRAGMA user_version").get()!.user_version, 6);
+  assert.equal(x.raw().prepare("PRAGMA user_version").get()!.user_version, 7);
   assert.deepEqual(s.jobs.getJob(job.jobId), job); assert.deepEqual(s.jobs.getJobHistory(job.jobId), history);
   assert.deepEqual(s.get(reservation.id), reservation);
   assert.equal(s.offlineHandoffs.get(job.jobId), undefined);

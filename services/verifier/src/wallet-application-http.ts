@@ -82,10 +82,17 @@ export class WalletApplicationHttp {
         if (this.sessions.resolve(token)?.sessionId !== session.sessionId) throw new WalletAuthError("authentication_required", 401);
         if(attestationAction){
           const service=this.#services?.workflowVerification;if(!(service instanceof ControlledAttestation))throw new WalletAuthError("attestation_unavailable",503);
-          const value=input as any,keys=attestationAction==="validate"?["apiVersion","cluster","jobId","wireBase64"]:["apiVersion","cluster","jobId"];
+          const value=input as any,needsReview=["authorize","validate","broadcast"].includes(attestationAction);
+          const keys=["apiVersion","cluster","jobId",...(needsReview?["reviewId"]:[]),...(attestationAction==="validate"?["wireBase64"]:[])];
           if(!value||typeof value!=="object"||JSON.stringify(Object.keys(value).sort())!==JSON.stringify(keys.sort())||value.apiVersion!==APPLICATION_API_VERSION||value.cluster!=="devnet"||typeof value.jobId!=="string"||!/^[a-f0-9-]{36}$/.test(value.jobId))throw new WalletAuthError("invalid_request",400);
           const active=()=>{if(this.sessions.resolve(token)?.sessionId!==session.sessionId)throw new WalletAuthError("authentication_required",401);};
-          const data=attestationAction==="review"?await service.review(value.jobId,session.wallet):attestationAction==="authorize"?await service.authorize(value.jobId,session.wallet,active):attestationAction==="validate"?await service.validate(value.jobId,session.wallet,value.wireBase64,active):attestationAction==="broadcast"?await service.broadcast(value.jobId,session.wallet,active):await service.confirm(value.jobId,session.wallet);
+          const assertReview=()=>{
+            active();
+            if(typeof value.reviewId!=="string")throw new WalletAuthError("invalid_request",400);
+            service.requireReview(value.jobId,session.wallet,value.reviewId);
+          };
+          if(needsReview)assertReview();
+          const data=attestationAction==="review"?await service.review(value.jobId,session.wallet):attestationAction==="authorize"?await service.authorize(value.jobId,session.wallet,assertReview):attestationAction==="validate"?await service.validate(value.jobId,session.wallet,value.wireBase64,assertReview):attestationAction==="broadcast"?await service.broadcast(value.jobId,session.wallet,assertReview):await service.confirm(value.jobId,session.wallet);
           active();this.reply(response,applicationReply(applicationRequestId(),"unknown",null,200,data,"unverified_devnet_rpc"));
         } else if (observation) {
           const reader=this.#services?.workflowState;
@@ -113,7 +120,7 @@ export class WalletApplicationHttp {
             : walletAction === "broadcast" ? await reviewer.submission(value.reviewId,session.wallet,value.wireBase64,assertActive)
             : walletAction === "authorize" ? await reviewer.authorize(value.reviewId,session.wallet,assertActive)
             : walletAction === "review" ? await reviewer.review({operation:value.operation,workflow:value.workflow},session.wallet)
-            : walletAction === "validate" ? {kind:"wallet_execution_signature" as const,signature:reviewer.validateSigned(value.reviewId,session.wallet,value.wireBase64).signature,liveExecution:false as const}
+            : walletAction === "validate" ? {kind:"wallet_execution_signature" as const,signature:await reviewer.acceptSignature(value.reviewId,session.wallet,value.wireBase64,assertActive),liveExecution:false as const}
             : walletAction === "confirm" ? await (async()=>{const c=await reviewer.confirm(value.reviewId,session.wallet,value.wireBase64);if(reviewer.actions)reviewer.actions.recordConfirmation(value.reviewId,c.signature,c.state);return c;})()
             : (await reviewer.revalidate(value.reviewId,session.wallet), {kind:"wallet_execution_revalidation" as const,liveExecution:false as const,state:"ready_for_review" as const});
           if (this.sessions.resolve(token)?.sessionId !== session.sessionId) throw new WalletAuthError("authentication_required",401);

@@ -17,11 +17,14 @@ import {
   ControlledActions,
   scopeDigest,
   type ApprovedScope,
+  type ApprovalSnapshot,
 } from "./controlled-actions.js";
 import {
   ReadOnlyWalletRpc,
   observeDeployment,
   reviewedArtifact,
+  validTransactionError,
+  requireExpiredLease,
   type ApprovedArtifact,
 } from "./devnet-wallet-review.js";
 import { AttestationTransactionCoordinator } from "./transaction-coordinator.js";
@@ -36,9 +39,9 @@ import type {
   AttestationState,
 } from "./attestation-chain.js";
 import { WorkflowStateReader } from "./workflow-state.js";
-import type {
-  ContributorAdmission,
-  WorkflowVerificationJob,
+import {
+  admitContributorWithDeadline, type ContributorAdmission,
+  type WorkflowVerificationJob,
 } from "./workflow-verification.js";
 import type { VerifierService } from "./service.js";
 import { WalletAuthError } from "./wallet-sessions.js";
@@ -54,6 +57,7 @@ interface Candidate {
   claim: JobClaim;
   policy: OfflinePolicyMessage;
   scope: ApprovedScope;
+  approval: ApprovalSnapshot;
   signatures: Map<string, Buffer>;
   authorized: Set<string>;
 }
@@ -93,6 +97,7 @@ export class ControlledAttestation {
     return {
       kind: "workflow_verification_job",
       jobId: job.jobId,
+      generation: job.generation,
       milestone: job.bindings.milestone,
       state: job.state,
       verificationOutcome: job.verificationOutcome,
@@ -133,10 +138,10 @@ export class ControlledAttestation {
       fee: 0,
       rent: 0,
     };
-    await this.actions.approval(scope);
+    const expected=await this.actions.approval(scope,configuration);
     assertSession();
     check(this.#tasks.size < 4, "verification_capacity");
-    let token: string | null = await this.admit(
+    let token: string | null = await admitContributorWithDeadline(this.admit,
       Object.freeze({
         milestone: request.milestone,
         student: request.student,
@@ -154,6 +159,8 @@ export class ControlledAttestation {
       "github_contributor_admission_required"
     );
     await this.reader.handoff(structuredClone(input), wallet);
+    assertSession();
+    await this.actions.assertApproval(scope,expected);
     assertSession();
     const job = this.store.jobs.createOrGetJob(
       "controlled_" + scopeDigest(state.milestone),
@@ -177,15 +184,16 @@ export class ControlledAttestation {
         verificationSpecHash: state.requirementsHash,
       }
     );
-    if (job.state !== "created" || this.#tasks.has(job.jobId))
-      return this.view(job);
+    if (this.#tasks.has(job.jobId) || (job.state!=="created" && !expected.reopensJob)) return this.view(job);
+    const existing=this.#candidates.get(job.jobId);
+    if(existing && this.now()<existing.policy.expiresAtMs) return this.view(job);
+    await this.actions.requireUnsent(scope,expected,lease=>requireExpiredLease(this.rpc,lease));
+    await this.actions.assertApproval(scope,expected);
+    assertSession();
+    if(this.#tasks.has(job.jobId))return this.view(this.store.jobs.getJob(job.jobId)!);
     check(this.#tasks.size<4,"verification_capacity");
-    const claimed = this.store.jobs.claimJob(
-      job.jobId,
-      job.identity,
-      job.revision,
-      "controlled_phantom"
-    );
+    const claimed=this.store.jobRecovery.claimControlled(job.jobId,job.identity,job.revision,expected.id,expected.reopensJob,expected.reopensAttempt);
+    this.#candidates.delete(job.jobId);
     let current = claimed.job;
     const fence = () => {
       const j = this.store.jobs.getJob(job.jobId);
@@ -216,7 +224,7 @@ export class ControlledAttestation {
     const task = (async () => {
       try {
         const boundChain:AttestationStateReader={read:async milestone=>{fence();const observed=await this.chain.read(milestone);fence();check(scopeDigest(observed)===scopeDigest(state),"changed_chain_state");return observed;}};
-        const boundService:Pick<VerifierService,"verify">={verify:async(value,credential)=>{fence();const result=await this.service.verify(value,credential,fence);fence();return result;}};
+        const boundService:Pick<VerifierService,"verify">={verify:async(value,credential)=>{fence();await this.actions.assertApproval(scope,expected);assertSession();fence();const result=await this.service.verify(value,credential,fence);fence();return result;}};
         const coordinator = new AttestationTransactionCoordinator(
           boundService,
           boundChain,
@@ -238,7 +246,7 @@ export class ControlledAttestation {
                   policy.verifier === state.verifier &&
                   policy.feePayer === scope.wallet
               );
-              const deploymentApproval=await this.actions.configuration();
+              const deploymentApproval=await this.actions.assertApproval(scope,expected);
               const deployed = await observeDeployment(
                 this.rpc,
                 await this.artifact(),
@@ -271,16 +279,10 @@ export class ControlledAttestation {
                   payer.lamports >= scope.fee,
                 "invalid_payer"
               );
-              await this.actions.approval(scope);
+              await this.actions.assertApproval(scope,expected);
               await policy.revalidate();
               policy.assertFresh();
               fence();
-              check(
-                !this.store.applicationTransactions.getForOperation(
-                  operationKey
-                ),
-                "attempt_consumed"
-              );
               for(const [id,c]of this.#candidates){if(this.now()>=c.policy.expiresAtMs&&!this.store.applicationTransactions.get(c.id)?.sendReserved)this.#candidates.delete(id);}
               check(this.#candidates.size < 64, "review_capacity");
               this.#candidates.set(job.jobId, {
@@ -289,6 +291,7 @@ export class ControlledAttestation {
                 claim: claimed.claim,
                 policy,
                 scope,
+                approval:expected,
                 signatures: new Map(),
                 authorized: new Set(),
               });
@@ -343,11 +346,17 @@ export class ControlledAttestation {
     );
     return c;
   }
-  private guard(c: Candidate, active:()=>void=()=>{}) {active();this.candidate(c.job.jobId,c.scope.wallet);c.policy.assertFresh();}
+  requireReview(jobId:string,wallet:string,reviewId:string) {
+    check(this.candidate(jobId,wallet).id===reviewId,"review_changed");
+  }
+  private guard(c: Candidate, active:()=>void=()=>{}) {
+    active();
+    check(this.candidate(c.job.jobId,c.scope.wallet)===c,"review_changed");
+    c.policy.assertFresh();
+  }
   private async fresh(c: Candidate) {
     c.policy.assertFresh();
-    await this.actions.approval(c.scope);
-    const deploymentApproval=await this.actions.configuration();
+    const deploymentApproval=await this.actions.assertApproval(c.scope,c.approval);
     const deployment = await observeDeployment(
       this.rpc,
       await this.artifact(),
@@ -405,9 +414,14 @@ export class ControlledAttestation {
     this.guard(c,assertActive);
     check(!c.authorized.has(wallet), "attempt_consumed");
     if (c.authorized.size === 0)
-      await this.actions.reserve(c.id, c.scope, c.policy.message, ()=>this.guard(c,assertActive));
-    else await this.actions.current(c.id, c.scope, c.policy.message);
+      await this.actions.reserve(c.id,c.scope,c.policy.message,()=>this.guard(c,assertActive),{
+        expected:c.approval,context:{blockhash:c.policy.blockhash,lastValidBlockHeight:c.policy.lastValidBlockHeight,
+          job:{id:c.job.jobId,generation:c.job.generation,revision:c.job.revision}},
+        expire:lease=>requireExpiredLease(this.rpc,lease),
+      });
+    else await this.actions.current(c.id,c.scope,c.policy.message,c.approval);
     this.guard(c,assertActive);
+    check(!c.authorized.has(wallet),"attempt_consumed");
     c.authorized.add(wallet);
     return {
       kind: "wallet_execution_authorization" as const,
@@ -439,18 +453,29 @@ export class ControlledAttestation {
     )?.signature;
     check(signature, "missing_signature");
     check(!c.signatures.has(wallet), "attempt_consumed");
-    this.guard(c,assertActive);c.signatures.set(wallet, Buffer.from(signature));
+    await this.actions.current(c.id,c.scope,c.policy.message,c.approval);
+    this.guard(c,assertActive);
+    check(!c.signatures.has(wallet),"attempt_consumed");
+    const proposed = new Map(c.signatures).set(wallet, Buffer.from(signature));
+    if (proposed.size === 2) {
+      const complete = this.wire(c, proposed);
+      await this.actions.signed(c.id, c.scope, c.policy.message, base58(complete.subarray(1, 65)),
+        c.approval, () => this.guard(c, assertActive));
+      this.guard(c, assertActive);
+    }
+    check(!c.signatures.has(wallet), "attempt_consumed");
+    c.signatures.set(wallet, Buffer.from(signature));
     return {
       kind: "attestation_signature" as const,
       signatureCount: c.signatures.size,
     };
   }
-  private wire(c: Candidate) {
+  private wire(c: Candidate, signatures = c.signatures) {
     const tx = Transaction.populate(Message.from(c.policy.message));
-    for (const [wallet, signature] of c.signatures)
+    for (const [wallet, signature] of signatures)
       tx.addSignature(new PublicKey(wallet), signature);
     check(
-      c.signatures.size === 2 && tx.verifySignatures(),
+      signatures.size === 2 && tx.verifySignatures(),
       "missing_signature"
     );
     return tx.serialize();
@@ -460,13 +485,16 @@ export class ControlledAttestation {
     check(wallet === c.scope.wallet, "incorrect_required_signer");
     await this.fresh(c);
     const wire = this.wire(c);
+    const recorded=await this.actions.current(c.id,c.scope,c.policy.message,c.approval);
+    check(recorded.state==="signed","attempt_consumed");
+    this.guard(c,assertActive);
     return this.actions.send(
       c.id,
       c.scope,
       c.policy.message,
       wire,
       base58(wire.subarray(1, 65)),
-      ()=>this.guard(c,assertActive)
+      ()=>this.guard(c,assertActive),c.approval
     );
   }
   async confirm(jobId: string, wallet: string) {
@@ -490,7 +518,7 @@ export class ControlledAttestation {
         Number.isSafeInteger(s.slot) &&
         s.slot >= 0 &&
         statuses.context?.slot >= s.slot &&
-        Object.hasOwn(s, "err")
+        validTransactionError(s.err)
       ) {
         const tx = await this.rpc.call("getTransaction", [
           signature,
@@ -505,7 +533,7 @@ export class ControlledAttestation {
             tx.transaction?.[1] === "base64" &&
             tx.transaction[0] === wire.toString("base64") &&
             tx.meta &&
-            Object.hasOwn(tx.meta, "err") &&
+            validTransactionError(tx.meta.err) &&
             JSON.stringify(tx.meta.err) === JSON.stringify(s.err)
         );
         if (s.err !== null) state = "failed";

@@ -4,7 +4,7 @@ import {useEffect,useRef,useState,type FormEvent} from "react";
 import {ApiError,ENVELOPE,message,request,base64,type Session} from "./api";
 import type {Preparation} from "./Workflow";
 interface State {kind:"workflow_state";internship:string;milestone:string;internshipExists:boolean;milestoneExists:boolean;status:string|null;student:string|null;verifier:string|null;requirementsHash:string|null;rewardAmountRaw:string|null;evidenceHash:string|null;verifiedAt:string|null;completion:string|null;settledAt:string|null;vaultAmountRaw:string|null;vaultClosed:boolean|null;slot:number;commitment:"confirmed";provenance:"offline_fixture"|"unverified_devnet_rpc";persisted:false;rewardPayment:"not_established"}
-interface VerificationJob {kind:"workflow_verification_job";jobId:string;state:string;verificationOutcome:"none"|"passed"|"rejected"}
+interface VerificationJob {kind:"workflow_verification_job";jobId:string;generation?:number;controlledRecovery?:{generation:number;attemptId:string|null;attemptState:string|null};state:string;verificationOutcome:"none"|"passed"|"rejected"}
 interface Handoff {kind:"verification_handoff";request:object;dispatch:"unavailable"|"contributor_admission_required";authorization:"not_granted";persisted:false;rewardPayment:"not_established"}
 export function WorkflowStatus({session,role,prepared,workflow,onExpired}:{session:Session;role:"organization"|"student";prepared:Preparation|null;workflow:object|null;onExpired:()=>void}){
  const [target,setTarget]=useState({sponsor:role==="organization"?session.wallet:"",internshipId:"",milestoneId:""});
@@ -28,7 +28,7 @@ export function WorkflowStatus({session,role,prepared,workflow,onExpired}:{sessi
   catch(e){if(n===generation.current){if(e instanceof ApiError&&e.status===401)onExpired();else setError(message(e));}}
   finally{if(n===generation.current)setBusy(false);}
  }
- async function refreshJob(){if(!job)return;const n=++generation.current;setBusy(true);setError("");try{const result=await request<{state:string;verificationOutcome:"none"|"passed"|"rejected"}>("/api/v1/jobs/"+job.jobId,"verification_job");if(n===generation.current)setJob({...job,...result.data});}catch(e){if(n===generation.current){if(e instanceof ApiError&&e.status===401)onExpired();else setError(message(e));}}finally{if(n===generation.current)setBusy(false);}}
+ async function refreshJob(){if(!job)return;const n=++generation.current;setBusy(true);setError("");try{const result=await request<{state:string;controlledRecovery?:VerificationJob["controlledRecovery"];verificationOutcome:"none"|"passed"|"rejected"}>("/api/v1/jobs/"+job.jobId,"verification_job");if(n===generation.current)setJob({...job,...result.data});}catch(e){if(n===generation.current){if(e instanceof ApiError&&e.status===401)onExpired();else setError(message(e));}}finally{if(n===generation.current)setBusy(false);}}
  async function inspect(event:FormEvent,verification=false){event.preventDefault();const n=++generation.current;pending.current?.abort();
   const controller=new AbortController();pending.current=controller;setError("");setBusy(true);setHandoff(null);if(!verification)setState(null);
   try{const body={...ENVELOPE,...target,...(verification?{evidence:JSON.parse(evidence)}:{})};
@@ -56,7 +56,7 @@ export function WorkflowStatus({session,role,prepared,workflow,onExpired}:{sessi
    {handoff&&<div role="status"><p>Request matches the observed submission. Independent GitHub contributor admission and the approved isolated runner are required before dispatch. No verification or attestation succeeded from this handoff alone.</p><label>Private validated verifier request — do not publish<textarea readOnly value={JSON.stringify(handoff.request,null,2)}/></label></div>}
   </form>}
   {role==="student"&&handoff&&<form onSubmit={e=>void dispatch(e)}><p>Dispatch uses separately admitted contributor credentials held only by the backend. Wallet login cannot supply GitHub authority. No attestation or transaction is authorized.</p><button disabled={busy||handoff.dispatch!=="contributor_admission_required"}>Request independent verification</button></form>}
-  {job&&<div role="status"><p>Verification job: {job.jobId}. State: {job.state.replaceAll("_"," ")}. Outcome: {job.verificationOutcome}. Attestation not authorized; reward payment not established.</p><button disabled={busy} onClick={()=>void refreshJob()}>Refresh verification job</button></div>}
+  {job&&<div role="status"><p>Verification job: {job.jobId}.{(job.controlledRecovery?.generation??job.generation)!==undefined?" Generation: "+(job.controlledRecovery?.generation??job.generation)+".":""}{job.controlledRecovery?.attemptId?" Attempt: "+job.controlledRecovery.attemptId+" ("+job.controlledRecovery.attemptState+").":""} State: {job.state.replaceAll("_"," ")}. Outcome: {job.verificationOutcome}. Attestation not authorized; reward payment not established.</p><button disabled={busy} onClick={()=>void refreshJob()}>Refresh verification job</button></div>}
   <p>Only admitted, chain-validated submissions create verification jobs. Chain observations remain transient; no fake jobs or transaction confirmations are created.</p>
  </section>;
 }

@@ -84,27 +84,44 @@ mint, reward, surplus entitlement and rent cap remain enforced.
 
 ## Persistence and recovery limits
 
-The existing LifecycleStore migrates additively from v5 to v6, retaining all
-prior tables and rows. Back up the operator's database before first opening it
-with the updated app; older app versions reject the newer schema. Tests use
-isolated databases. No existing operator database is modified by validation.
+The LifecycleStore migrates forward to SQLite v7. Back up the database with the
+application stopped before starting the updated version. The migration preserves
+all v5/v6 tables and rows. Older versions reject v7. A pre-migration backup is
+not a safe way to roll back after the updated app records an attempt.
 
-A durable operation/approval reservation is recorded before a Phantom request,
-and a send reservation is committed before the single Devnet RPC invocation
-(`skipPreflight:false`, confirmed preflight, `maxRetries:0`). The same operation
-cannot be signed or sent again by obtaining a new review, racing requests or
-restarting. Errors and timeouts remain Unknown, never successful by inference.
-Local records are bookkeeping, never restored signer/policy authorization.
+Each approval ID and transaction attempt remains in the ledger. A reservation
+is recorded before Phantom opens. If a complete wallet signature is received,
+the app records its signature separately from the send reservation. A reservation
+with no recorded signature does not prove that a wallet never signed. The app
+commits a send reservation before making its single Devnet RPC request. A
+timeout, crash, malformed response, or expired session never releases that
+reservation. Any attempted, submitted, unknown, confirmed, or failed send
+must be reconciled read-only.
 
-This conservative MVP does **not** automatically release a rejected, expired,
-crashed or uncertain attempt. Stop for operator reconciliation. No force reset,
-database deletion, re-signing or resending is a recovery procedure. Message and
-partial-signature contexts remain process-local; a restart retains the fence
-but requires manual read-only chain reconciliation. If the browser loses its session, sign in again with the same wallet, refresh
-the scope and select the previous operation to recheck the recorded transaction.
-Exact receipt checks require the original server review context. No private evidence preimages or credentials are
-persisted in the new table. On-chain unverified-work lockup remains the approved
-contract limitation; there is no new refund/recovery policy.
+For a prior attempt whose ledger proves no app send was reserved, an operator
+can approve a new attempt by assigning a fresh approval ID and adding
+`reopensAttempt` with the exact previous attempt ID. Use **Recheck a previous
+transaction** to retrieve the ID. Keep the same operation, scope, and signers.
+Finalized Devnet must report a block height beyond the obsolete transaction's
+last valid height and explicitly report its blockhash invalid. This check keeps
+a previously handed-out signed message from landing after reopening. Fresh
+chain state and the original program's state checks still have to allow the
+operation. The new reservation atomically supersedes the prior one and retains
+its row. Legacy v6 rows without a recorded message lease stay closed to
+reopening, since their expiry cannot be established from the ledger.
+
+For attestation recovery, add `reopensJob` as `<job UUID>:<generation>` to the
+new approval entry and add `reopensAttempt` only if that job has an existing
+transaction attempt. Read the generation and attempt from the authenticated job
+view. If no transaction attempt exists, no signing permission was issued for
+that job. A new generation invalidates old workers and runs GitHub verification,
+the trusted runner, and attestation policy again. Both wallet signatures must be
+obtained anew. A prior send reservation blocks job recovery even after expiry.
+
+Message and partial-signature contexts remain process-local. Exact receipt
+reconciliation after a restart can require manual read-only chain checks. No
+private evidence preimages or credentials are stored in the transaction ledger.
+The contract's existing unverified-work lockup and refund policy still apply.
 
 ## Evidence and deployment prerequisites
 

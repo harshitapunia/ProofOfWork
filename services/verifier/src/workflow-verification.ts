@@ -20,7 +20,7 @@ import { WalletAuthError } from "./wallet-sessions.js";
 export const LIVE_VERIFIER_DISPATCH=false;
 export type ContributorAdmission = (binding: Readonly<Pick<Request,"milestone"|"student"|"repositoryId"|"contributorId"|"commit">>) => Promise<string | null>;
 export interface WorkflowVerificationJob {
- kind:"workflow_verification_job";jobId:string;milestone:string;state:string;verificationOutcome:"none"|"passed"|"rejected";
+ kind:"workflow_verification_job";jobId:string;generation?:number;milestone:string;state:string;verificationOutcome:"none"|"passed"|"rejected";
  mode:"offline-test-only"|"controlled-devnet";persisted:true;attestation:"not_authorized";rewardPayment:"not_established";retryAuthorized:false;
 }
 export class WorkflowVerification {
@@ -36,10 +36,7 @@ export class WorkflowVerification {
   if(this.#tasks.size>=4)throw new WalletAuthError("verification_capacity",503);
   const request=handoff.request;
   const admission=Object.freeze({milestone:request.milestone,student:request.student,repositoryId:request.repositoryId,contributorId:request.contributorId,commit:request.commit});
-  let timer:ReturnType<typeof setTimeout>|undefined,token:string|null;
-  try{token=await Promise.race([this.admit(admission),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new WalletAuthError("verification_admission_unavailable",503)),5000);})]);}
-  catch{throw new WalletAuthError("verification_admission_unavailable",503);}
-  finally{clearTimeout(timer);}
+  let token=await admitContributorWithDeadline(this.admit,admission);
   assertSession();
   if(typeof token!=="string" || !token || token.length>1024 || /[\r\n]/.test(token))throw new WalletAuthError("github_contributor_admission_required",403);
   // Reobserve after credential admission; request/proposal contents alone never create a job.
@@ -72,6 +69,17 @@ export class WorkflowVerification {
 /** Explicit operator admission for ONE submitted commitment, not a browser-provided token or global identity.
  * No environment values or files are created by this function. Configure only after operator approval.
  */
+export async function admitContributorWithDeadline(
+  admit: ContributorAdmission, binding: Parameters<ContributorAdmission>[0], timeoutMs=5000
+): Promise<string|null> {
+  let timer: ReturnType<typeof setTimeout>|undefined;
+  try {
+    return await Promise.race([admit(binding), new Promise<never>((_,reject)=>{
+      timer=setTimeout(()=>reject(new Error("admission_timeout")),timeoutMs);
+    })]);
+  } catch { throw new WalletAuthError("verification_admission_unavailable",503); }
+  finally { clearTimeout(timer); }
+}
 export function admittedContributor(env:NodeJS.ProcessEnv):ContributorAdmission|undefined{
  const names=["APP_GITHUB_USER_TOKEN_FILE","APP_VERIFICATION_MILESTONE","APP_VERIFICATION_REPOSITORY_ID","APP_VERIFICATION_CONTRIBUTOR_ID","APP_VERIFICATION_COMMIT"] as const;
  if(names.every(k=>env[k]===undefined))return undefined;
@@ -84,7 +92,7 @@ export function admittedContributor(env:NodeJS.ProcessEnv):ContributorAdmission|
   if(binding.milestone!==milestone||binding.repositoryId!==repositoryId||binding.contributorId!==contributorId||binding.commit!==commit)return null;
   let handle;
   try{
-   handle=await open(file!,constants.O_RDONLY|constants.O_NOFOLLOW);const stat=await handle.stat();
+   handle=await open(file!,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);const stat=await handle.stat();
    if(!stat.isFile()||(stat.mode&0o077)!==0||stat.size<1||stat.size>1025||(process.getuid&&stat.uid!==process.getuid()))throw Error();
    const bytes=await handle.readFile();if(bytes.length>1025)throw Error();const token=bytes.toString("utf8").replace(/\n$/,"");
    if(!/^[A-Za-z0-9_]{1,1024}$/.test(token))throw Error();return token;

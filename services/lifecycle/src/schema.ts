@@ -41,6 +41,13 @@ export const APPLICATION_TRANSACTION_SCHEMA_V6=[
  "CREATE TRIGGER application_transaction_binding_immutable BEFORE UPDATE OF id,operation_key,wallet,approval_id,message_digest,scope_digest,context,context_digest,format ON application_transactions BEGIN SELECT RAISE(ABORT,'immutable_application_transaction'); END",
  "CREATE TRIGGER application_send_reservation_retained BEFORE UPDATE OF send_reserved ON application_transactions WHEN NEW.send_reserved<OLD.send_reserved BEGIN SELECT RAISE(ABORT,'send_reservation_retained'); END",
 ];
+/** Append-only supersession edges. The original v6 rows remain byte-for-byte intact. */
+export const APPLICATION_RECOVERY_SCHEMA_V7=[
+ "CREATE TABLE application_attempt_successors(previous_id TEXT PRIMARY KEY REFERENCES application_transactions(id), next_id TEXT NOT NULL UNIQUE REFERENCES application_transactions(id), operation_key TEXT NOT NULL, CHECK(previous_id<>next_id)) STRICT",
+ "CREATE INDEX application_successor_scope ON application_attempt_successors(operation_key)",
+ "CREATE TRIGGER application_successor_no_delete BEFORE DELETE ON application_attempt_successors BEGIN SELECT RAISE(ABORT,'application_successor_retained'); END",
+ "CREATE TRIGGER application_successor_immutable BEFORE UPDATE ON application_attempt_successors BEGIN SELECT RAISE(ABORT,'immutable_application_successor'); END",
+];
 const APP_ID = 0x504f574c;
 function validate(db: DatabaseSync, expected: readonly string[]): void {
   const actual = db.prepare("SELECT sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY name").all().map(row => row.sql).sort();
@@ -50,14 +57,14 @@ function validate(db: DatabaseSync, expected: readonly string[]): void {
 export function migrateLifecycleSchema(db: DatabaseSync): void {
   const version = db.prepare("PRAGMA user_version").get()!.user_version;
   const application = db.prepare("PRAGMA application_id").get()!.application_id;
-  check(version === 0 || version === 1 || version === 2 || version === 3 || version === 4 || version === 5 || version === 6, "schema_mismatch");
+  check(version === 0 || version === 1 || version === 2 || version === 3 || version === 4 || version === 5 || version === 6 || version === 7, "schema_mismatch");
   if (version === 0) {
     check(application === 0, "schema_mismatch"); validate(db, []);
     for (const sql of RESERVATION_SCHEMA_V1) db.exec(sql);
     db.exec("PRAGMA application_id=" + APP_ID);
   } else {
     check(application === APP_ID, "schema_mismatch");
-    validate(db, version === 1 ? RESERVATION_SCHEMA_V1 : version === 2 ? [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2] : version === 3 ? [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3] : [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3, ...INTENT_SCHEMA_V4, ...(version >= 5 ? EXECUTION_SCHEMA_V5 : []), ...(version >= 6 ? APPLICATION_TRANSACTION_SCHEMA_V6 : [])]);
+    validate(db, version === 1 ? RESERVATION_SCHEMA_V1 : version === 2 ? [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2] : version === 3 ? [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3] : [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3, ...INTENT_SCHEMA_V4, ...(version >= 5 ? EXECUTION_SCHEMA_V5 : []), ...(version >= 6 ? APPLICATION_TRANSACTION_SCHEMA_V6 : []), ...(version >= 7 ? APPLICATION_RECOVERY_SCHEMA_V7 : [])]);
   }
   if (version === 0 || version === 1) {
     for (const sql of JOB_SCHEMA_V2) db.exec(sql);
@@ -73,5 +80,6 @@ export function migrateLifecycleSchema(db: DatabaseSync): void {
   }
   if (version < 5) { for (const sql of EXECUTION_SCHEMA_V5) db.exec(sql); db.exec("PRAGMA user_version=5"); }
   if(version<6){for(const sql of APPLICATION_TRANSACTION_SCHEMA_V6)db.exec(sql);db.exec("PRAGMA user_version=6");}
-  validate(db, [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3, ...INTENT_SCHEMA_V4, ...EXECUTION_SCHEMA_V5, ...APPLICATION_TRANSACTION_SCHEMA_V6]);
+  if(version<7){for(const sql of APPLICATION_RECOVERY_SCHEMA_V7)db.exec(sql);db.exec("PRAGMA user_version=7");}
+  validate(db, [...RESERVATION_SCHEMA_V1, ...JOB_SCHEMA_V2, ...HANDOFF_SCHEMA_V3, ...INTENT_SCHEMA_V4, ...EXECUTION_SCHEMA_V5, ...APPLICATION_TRANSACTION_SCHEMA_V6, ...APPLICATION_RECOVERY_SCHEMA_V7]);
 }

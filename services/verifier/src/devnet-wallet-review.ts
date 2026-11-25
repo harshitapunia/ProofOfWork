@@ -1,4 +1,4 @@
-import {ControlledActions,scopeDigest,type ApprovedScope} from "./controlled-actions.js";
+import {ControlledActions,scopeDigest,type ApprovedScope,type ApprovalSnapshot,type AttemptContext} from "./controlled-actions.js";
 import {prepareReviewedSettlement,settlementPostconditions,type SettlementReviewPlan,type SettlementReceipt} from "./wallet-settlement.js";
 /** Read-only Devnet wallet review. No signer, sender, custody, state mutation or live enable switch. */
 import { createHash, randomUUID } from "node:crypto";
@@ -24,6 +24,61 @@ function data(a: any, size?: number): Buffer {
 }
 const emptyAccount=(a:any)=>a===null||(a?.owner===SystemProgram.programId.toBase58()&&a.executable===false&&JSON.stringify(a.data)==='["","base64"]');
 const hash = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
+function fundingTokenAmount(rows: unknown, index: number, owner: string): bigint {
+  check(index>=0 && Array.isArray(rows),"token_postcondition_mismatch");
+  const matches=rows.filter(row=>row?.accountIndex===index);
+  const row=matches[0], amount=row?.uiTokenAmount?.amount;
+  check(matches.length===1&&row.owner===owner&&row.mint===DEMO_MINT&&row.uiTokenAmount?.decimals===DEMO_DECIMALS
+    &&typeof amount==="string"&&/^(0|[1-9][0-9]{0,19})$/.test(amount),"token_postcondition_mismatch");
+  const raw=BigInt(amount);check(raw<=0xffffffffffffffffn,"token_postcondition_mismatch");return raw;
+}
+/** Only recognized RPC transaction errors can become terminal evidence. */
+export function validTransactionError(value: unknown): boolean {
+  if(value===null)return true;
+  if(typeof value==="string")return [
+    "AccountInUse","AccountLoadedTwice","AccountNotFound","ProgramAccountNotFound",
+    "InsufficientFundsForFee","InvalidAccountForFee","AlreadyProcessed","BlockhashNotFound",
+    "CallChainTooDeep","MissingSignatureForFee","InvalidAccountIndex","SignatureFailure",
+    "InvalidProgramForExecution","SanitizeFailure","ClusterMaintenance","AccountBorrowOutstanding",
+    "InvalidWritableAccount","UnsupportedVersion","InvalidRentPayingAccount",
+    "WouldExceedMaxBlockCostLimit","WouldExceedMaxAccountCostLimit","WouldExceedMaxVoteCostLimit",
+    "TooManyAccountLocks","AddressLookupTableNotFound","InvalidAddressLookupTableOwner",
+    "InvalidAddressLookupTableData","InvalidAddressLookupTableIndex","MaxLoadedAccountsDataSizeExceeded",
+    "InvalidLoadedAccountsDataSizeLimit","ResanitizationNeeded","UnbalancedTransaction",
+    "WouldExceedAccountDataBlockLimit","WouldExceedAccountDataTotalLimit","ProgramCacheHitMaxLimit","CommitCancelled"
+  ].includes(value);
+  if(!value||typeof value!=="object"||Array.isArray(value))return false;
+  const entries=Object.entries(value);if(entries.length!==1)return false;
+  const [kind,detail]=entries[0]!;
+  const u8=(n:unknown)=>typeof n==="number"&&Number.isInteger(n)&&n>=0&&n<=255;
+  if(kind==="InstructionError") {
+    if(!Array.isArray(detail)||detail.length!==2||!u8(detail[0]))return false;
+    const error:unknown=detail[1];
+    if(typeof error==="string")return [
+      "GenericError","InvalidArgument","InvalidInstructionData","InvalidAccountData",
+      "AccountDataTooSmall","InsufficientFunds","IncorrectProgramId","MissingRequiredSignature",
+      "AccountAlreadyInitialized","UninitializedAccount","UnbalancedInstruction","ModifiedProgramId",
+      "ExternalAccountLamportSpend","ExternalAccountDataModified","ReadonlyLamportChange","ReadonlyDataModified",
+      "DuplicateAccountIndex","ExecutableModified","RentEpochModified","NotEnoughAccountKeys",
+      "AccountDataSizeChanged","AccountNotExecutable","AccountBorrowFailed","AccountBorrowOutstanding",
+      "DuplicateAccountOutOfSync","InvalidError","ExecutableDataModified","ExecutableLamportChange",
+      "ExecutableAccountNotRentExempt","UnsupportedProgramId","CallDepth","MissingAccount",
+      "ReentrancyNotAllowed","MaxSeedLengthExceeded","InvalidSeeds","InvalidRealloc",
+      "ComputationalBudgetExceeded","PrivilegeEscalation","ProgramEnvironmentSetupFailure","ProgramFailedToComplete",
+      "ProgramFailedToCompile","Immutable","IncorrectAuthority","BorshIoError",
+      "AccountNotRentExempt","InvalidAccountOwner","ArithmeticOverflow","UnsupportedSysvar",
+      "IllegalOwner","MaxAccountsDataAllocationsExceeded","MaxAccountsExceeded","MaxInstructionTraceLengthExceeded",
+      "BuiltinProgramsMustConsumeComputeUnits"
+    ].includes(error);
+    if(!error||typeof error!=="object"||Array.isArray(error)||Object.keys(error).length!==1)return false;
+    const data=error as Record<string,unknown>;
+    return (typeof data.Custom==="number"&&Number.isInteger(data.Custom)&&data.Custom>=0&&data.Custom<=0xffffffff)
+      || (typeof data.BorshIoError==="string"&&data.BorshIoError.length<=1024);
+  }
+  if(kind==="DuplicateInstruction")return u8(detail);
+  return ["InsufficientFundsForRent","ProgramExecutionTemporarilyRestricted"].includes(kind)&&!!detail
+    &&typeof detail==="object"&&!Array.isArray(detail)&&Object.keys(detail).length===1&&u8((detail as Record<string,unknown>).account_index);
+}
 export interface ApprovedArtifact { bytes: Buffer; sha256: string }
 export async function reviewedArtifact(): Promise<ApprovedArtifact> {
   const pin = JSON.parse(await readFile(new URL("../../../../tests/runtime/artifact-provenance.json", import.meta.url), "utf8"));
@@ -52,6 +107,15 @@ export class ReadOnlyWalletRpc {
     const r=await this.call("getMultipleAccounts",[addresses,{encoding:"base64",commitment:"confirmed",minContextSlot:minimum}],signal);
     const slot=integer(r?.context?.slot);check(slot>=minimum && Array.isArray(r.value) && r.value.length===addresses.length,"invalid_rpc_response");return {slot,values:r.value};
   }
+}
+export async function requireExpiredLease(rpc:ReadOnlyWalletRpc, lease:AttemptContext) {
+  const blockhash=new PublicKey(lease.blockhash);
+  check(blockhash.toBase58()===lease.blockhash&&!blockhash.equals(PublicKey.default),"recovery_evidence_unavailable");
+  const signal=AbortSignal.timeout(10000);
+  check(await rpc.call("getGenesisHash",[],signal)===SETTLEMENT_DEVNET_GENESIS,"wrong_cluster");
+  check(integer(await rpc.call("getBlockHeight",[{commitment:"finalized"}],signal))>lease.lastValidBlockHeight
+    &&contextual(await rpc.call("isBlockhashValid",[lease.blockhash,{commitment:"finalized"}],signal),0)===false,
+    "previous_message_still_live");
 }
 function mintObservation(a:any):DeploymentObservation["mint"] {
   if(a===null)return {exists:false,owner:null,decimals:null,authority:null,freezeAuthority:null,supplyRaw:null};
@@ -97,7 +161,7 @@ export interface WalletReview {
   blockhash:string|null; observedSlot:number|null; expiresAt:string|null; feeLamports:number|null; rentLamports:number|null;
   deployment:DeploymentObservation|null; blockers:string[]; rewardPayment:"not_established"; provenance:"unverified_devnet_rpc";
 }
-interface Context { view:WalletReview; plan:WorkflowPreparation; message:Buffer; deadline:number; created:number; beforeToken:bigint|null }
+interface Context { view:WalletReview; plan:WorkflowPreparation; message:Buffer; deadline:number; created:number }
 export interface WalletConfirmation {kind:"wallet_execution_confirmation";state:"confirmed"|"failed"|"unknown";signature:string;explorerUrl:string|null;rewardPayment:"not_established"|"exact_reward_confirmed";settlement?:SettlementReceipt;retryAuthorized:false;provenance:"unverified_devnet_rpc"}
 export class WalletExecutionReviewer {
   readonly #confirmations=new Map<string,WalletConfirmation>();
@@ -122,8 +186,8 @@ export class WalletExecutionReviewer {
     }catch(e){view.blockers=[e instanceof WalletAuthError?e.code:"settlement_validation_failed"];}
     return view;
   }
-  private async revalidateSettlement(id:string,wallet:string):Promise<void>{
-    const c=this.settlement(id,wallet);check(this.now()-c.created<20000,"review_expired");const deployment=await this.deployment();check(deployment.blockers.length===0,"deployment_changed");
+  private async revalidateSettlement(id:string,wallet:string,approval?:ApprovalSnapshot):Promise<void>{
+    const c=this.settlement(id,wallet);check(this.now()-c.created<20000,"review_expired");const deployment=await this.deployment(undefined,approval);check(deployment.blockers.length===0,"deployment_changed");
     const p=await prepareReviewedSettlement(this.rpc,c.prepared.scope,wallet,Math.max(deployment.slot,c.view.observedSlot!),c.prepared.seed);p.transaction.recentBlockhash=c.view.blockhash!;
     check(p.transaction.serializeMessage().equals(c.message)&&p.rent===c.prepared.rent&&scopeDigest({scope:p.scope,student:p.student,reward:p.reward.toString()})===c.view.scopeDigest,"transaction_changed");
     const fee=integer(contextual(await this.rpc.call("getFeeForMessage",[c.view.messageBase64,{commitment:"confirmed",minContextSlot:p.slot}]),p.slot));
@@ -139,7 +203,7 @@ export class WalletExecutionReviewer {
       const statuses=await this.rpc.call("getSignatureStatuses",[[signed.signature],{searchTransactionHistory:true}]);check(Array.isArray(statuses?.value)&&statuses.value.length===1,"invalid_rpc_response");const status=statuses.value[0];
       if(!status||!["confirmed","finalized"].includes(status.confirmationStatus))return out;
       check(Object.hasOwn(status,"err"),"invalid_rpc_response");const slot=integer(status.slot);check(integer(statuses.context?.slot)>=slot&&slot>=c.view.observedSlot!,"invalid_rpc_response");
-      if(status.err!==null){out.state="failed";return out;}
+      check(validTransactionError(status.err),"invalid_rpc_response");if(status.err!==null){out.state="failed";return out;}
       const transaction=await this.rpc.call("getTransaction",[signed.signature,{encoding:"base64",commitment:"confirmed",maxSupportedTransactionVersion:0}]);
       check(transaction?.meta?.err===null&&integer(transaction.slot)===slot&&Array.isArray(transaction.transaction)&&transaction.transaction[1]==="base64"&&transaction.transaction[0]===wireBase64,"transaction_not_correlated");
       const receipt=await settlementPostconditions(this.rpc,c.prepared,wallet,Transaction.from(signed.wire),transaction.meta,slot,c.view.feeLamports!);
@@ -148,11 +212,37 @@ export class WalletExecutionReviewer {
     return out;
   }
   constructor(readonly rpc=new ReadOnlyWalletRpc(),private readonly artifact:()=>Promise<ApprovedArtifact|undefined>=async()=>{try{return await reviewedArtifact();}catch{return undefined;}},private readonly now=()=>Date.now(),readonly actions?:ControlledActions){}
-  private async deployment(signal=AbortSignal.timeout(10000)){let approval;try{approval=await this.actions?.configuration();}catch{}const out=await observeDeployment(this.rpc,await this.artifact(),signal,approval?.upgradeAuthority);if(approval&&out.approvedArtifactSha256!==approval.artifactSha256)out.blockers.push("approval_artifact_mismatch");return out;}
+  private async deployment(signal=AbortSignal.timeout(10000),expected?:ApprovalSnapshot){let approval:Pick<ApprovalSnapshot,"upgradeAuthority"|"artifactSha256">|undefined=expected;if(!expected)try{approval=await this.actions?.configuration();}catch{}const out=await observeDeployment(this.rpc,await this.artifact(),signal,approval?.upgradeAuthority);if(approval&&out.approvedArtifactSha256!==approval.artifactSha256)out.blockers.push("approval_artifact_mismatch");return out;}
   private scope(id:string,wallet:string):ApprovedScope{const c=this.#settlements.has(id)?this.settlement(id,wallet):this.context(id,wallet);return {operationKey:c.view.operationKey!,scopeDigest:c.view.scopeDigest!,wallet,additionalSigner:null,fee:c.view.feeLamports!,rent:c.view.rentLamports!};}
   private async eligibility(view:WalletReview,binding:unknown,account:string){view.operationKey=view.operation+":"+account;view.scopeDigest=scopeDigest(binding);view.liveExecution=!!this.actions&&await this.actions.eligible({operationKey:view.operationKey,scopeDigest:view.scopeDigest,wallet:view.wallet,additionalSigner:null,fee:view.feeLamports!,rent:view.rentLamports!});view.blockers=view.liveExecution?[]:["live_execution_disabled"];}
-  async authorize(id:string,wallet:string,assertActive=()=>{}){check(this.actions,"live_execution_disabled");await this.revalidate(id,wallet);const c=this.#settlements.has(id)?this.settlement(id,wallet):this.context(id,wallet);await this.actions.reserve(id,this.scope(id,wallet),c.message,()=>{assertActive();check(this.now()-c.created>=0&&this.now()-c.created<20000,"review_expired");});return {kind:"wallet_execution_authorization" as const,liveExecution:true as const};}
-  async submission(id:string,wallet:string,wireBase64:string,assertActive=()=>{}){check(this.actions,"live_execution_disabled");await this.revalidate(id,wallet);const signed=this.validateSigned(id,wallet,wireBase64),c=this.#settlements.has(id)?this.settlement(id,wallet):this.context(id,wallet);return this.actions.send(id,this.scope(id,wallet),c.message,signed.wire,signed.signature,()=>{assertActive();check(this.now()-c.created>=0&&this.now()-c.created<20000,"review_expired");});}
+  private active(c:{created:number},assertActive:()=>void){
+    assertActive();check(this.now()-c.created>=0&&this.now()-c.created<20000,"review_expired");
+  }
+  async authorize(id:string,wallet:string,assertActive=()=>{}){
+    check(this.actions,"live_execution_disabled");
+    const scope=this.scope(id,wallet),expected=await this.actions.approval(scope);
+    await this.revalidate(id,wallet,expected);
+    const c=this.#settlements.has(id)?this.settlement(id,wallet):this.context(id,wallet);
+    await this.actions.reserve(id,scope,c.message,()=>this.active(c,assertActive),{
+      expected,context:{blockhash:c.view.blockhash!,lastValidBlockHeight:c.deadline},expire:lease=>requireExpiredLease(this.rpc,lease),
+    });
+    return {kind:"wallet_execution_authorization" as const,liveExecution:true as const};
+  }
+  async acceptSignature(id:string,wallet:string,wireBase64:string,assertActive=()=>{}){
+    const signed=this.validateSigned(id,wallet,wireBase64);
+    const c=this.#settlements.has(id)?this.settlement(id,wallet):this.context(id,wallet);
+    if(this.actions && c.view.liveExecution){
+      await this.actions.signed(id,this.scope(id,wallet),c.message,signed.signature,undefined,()=>this.active(c,assertActive));
+    }
+    return signed.signature;
+  }
+  async submission(id:string,wallet:string,wireBase64:string,assertActive=()=>{}){
+    check(this.actions,"live_execution_disabled");
+    const scope=this.scope(id,wallet),expected=await this.actions.approval(scope);
+    await this.revalidate(id,wallet,expected);
+    const signed=this.validateSigned(id,wallet,wireBase64),c=this.#settlements.has(id)?this.settlement(id,wallet):this.context(id,wallet);
+    return this.actions.send(id,scope,c.message,signed.wire,signed.signature,()=>this.active(c,assertActive),expected);
+  }
   private context(id:string,wallet:string):Context {const c=this.#tickets.get(id);check(c && c.view.wallet===wallet && this.now()-c.created>=0 && this.now()-c.created<600000,"review_unavailable");return c;}
   private prune(){for(const [id,c]of this.#tickets)if(this.now()-c.created<0 || this.now()-c.created>=600000)this.#tickets.delete(id);for(const [id,c]of this.#settlements)if(this.now()-c.created<0||this.now()-c.created>=600000)this.#settlements.delete(id);check(this.#tickets.size+this.#settlements.size<64,"review_capacity");}
   private token(a:any,authority:string):bigint {check(a && a.executable===false && a.owner===TOKEN_PROGRAM_ID,"invalid_token_account");const b=data(a,165);
@@ -179,7 +269,6 @@ export class WalletExecutionReviewer {
     let token:bigint|null=null;
     if(op==="fund_milestone" && !post){check(emptyAccount(a[3]),"duplicate_vault");token=this.token(a[4],t.sponsor);check(token>=m.rewardAmount,"insufficient_tokens");}
     if(op==="assign_student" || op==="submit_milestone" || op==="fund_milestone" && post){check(this.token(a[3],deriveVaultAuthority(plan.milestone)[0].toBase58())>=m.rewardAmount,"insufficient_escrow");}
-    if(op==="fund_milestone" && post)token=this.token(a[4],t.sponsor);
     return {slot,balance,token};
   }
   async review(input:unknown,wallet:string):Promise<WalletReview>{
@@ -206,19 +295,18 @@ export class WalletExecutionReviewer {
       const id=randomUUID(),created=this.now();Object.assign(view,{state:"ready_for_review",reviewId:id,messageBase64:message.toString("base64"),messageBase58:base58(message),
         blockhash,lastValidBlockHeight:deadline,observedSlot:before.slot,expiresAt:new Date(created+20000).toISOString(),feeLamports:fee,rentLamports:rent,blockers:["live_execution_disabled"]});
       await this.eligibility(view,{operation:op,terms:plan.terms,requirementsHash:plan.requirementsHash,evidenceHash:plan.evidenceHash},op==="create_internship"?plan.internship:plan.milestone);
-      this.#tickets.set(id,{view:structuredClone(view),plan,message,deadline,created,beforeToken:before.token});
+      this.#tickets.set(id,{view:structuredClone(view),plan,message,deadline,created});
     } catch(e){view.blockers=[e instanceof WalletAuthError?e.code:"account_validation_failed"];}
     return view;
   }
-  async revalidate(id:string,wallet:string):Promise<void>{
-    if(this.#settlements.has(id))return this.revalidateSettlement(id,wallet);
+  async revalidate(id:string,wallet:string,approval?:ApprovalSnapshot):Promise<void>{
+    if(this.#settlements.has(id))return this.revalidateSettlement(id,wallet,approval);
     const c=this.context(id,wallet);check(this.now()-c.created>=0 && this.now()-c.created<20000,"review_expired");const signal=AbortSignal.timeout(10000);
-    const observation=await this.deployment(signal);check(observation.blockers.length===0,"deployment_changed");
+    const observation=await this.deployment(signal,approval);check(observation.blockers.length===0,"deployment_changed");
     const before=await this.snapshot(c.plan,c.view.operation,wallet,Math.max(c.view.observedSlot!,observation.slot),false,signal);
     const size=c.view.operation==="create_internship"?49:c.view.operation==="create_milestone"?276:c.view.operation==="fund_milestone"?165:c.view.operation==="submit_milestone"?113:0;
     const rent=size?integer(await this.rpc.call("getMinimumBalanceForRentExemption",[size,{commitment:"confirmed"}],signal)):0;
     check(rent===c.view.rentLamports,"rent_changed");check(BigInt(before.balance)>=BigInt(c.view.feeLamports!)+BigInt(rent),"insufficient_lamports");
-    c.beforeToken=before.token;
     check(integer(await this.rpc.call("getBlockHeight",[{commitment:"confirmed"}],signal))<c.deadline
       && contextual(await this.rpc.call("isBlockhashValid",[c.view.blockhash,{commitment:"confirmed",minContextSlot:before.slot}],signal),before.slot)===true,"expired_blockhash");
     check(integer(contextual(await this.rpc.call("getFeeForMessage",[c.view.messageBase64,{commitment:"confirmed",minContextSlot:before.slot}],signal),before.slot))===c.view.feeLamports,"fee_changed");
@@ -241,18 +329,23 @@ export class WalletExecutionReviewer {
       check(Array.isArray(status?.value) && status.value.length===1,"invalid_rpc_response");const s=status.value[0];if(s===null)return out;
       check(s && ["processed","confirmed","finalized"].includes(s.confirmationStatus) && Object.hasOwn(s,"err"),"invalid_rpc_response");
       if(!["confirmed","finalized"].includes(s.confirmationStatus))return out;
-      if(s.err!==null){out.state="failed";return out;}const slot=integer(s.slot);check(integer(status.context?.slot)>=slot && slot>=c.view.observedSlot!,"invalid_rpc_response");
+      check(validTransactionError(s.err),"invalid_rpc_response");if(s.err!==null){out.state="failed";return out;}const slot=integer(s.slot);check(integer(status.context?.slot)>=slot && slot>=c.view.observedSlot!,"invalid_rpc_response");
       const transaction=await this.rpc.call("getTransaction",[signed.signature,{encoding:"base64",commitment:"confirmed",maxSupportedTransactionVersion:0}],signal);
       check(transaction?.meta?.err===null && integer(transaction.slot)===slot && Array.isArray(transaction.transaction) && transaction.transaction[1]==="base64"
         && transaction.transaction[0]===wireBase64,"transaction_not_correlated");
-      const after=await this.snapshot(c.plan,c.view.operation,wallet,slot,true,signal);
-      if(c.view.operation==="fund_milestone")check(after.token===c.beforeToken!-BigInt(c.plan.terms.rewardAmountRaw),"token_postcondition_mismatch");
+      await this.snapshot(c.plan,c.view.operation,wallet,slot,true,signal);
+      if(c.view.operation==="fund_milestone"){
+        const keys=Transaction.from(signed.wire).compileMessage().accountKeys;
+        const index=keys.findIndex(k=>k.equals(deriveSponsorAta(c.plan.terms.sponsor)));
+        const debit=(rows:unknown)=>fundingTokenAmount(rows,index,c.plan.terms.sponsor);
+        check(debit(transaction.meta.preTokenBalances)-debit(transaction.meta.postTokenBalances)===BigInt(c.plan.terms.rewardAmountRaw),"token_postcondition_mismatch");
+      }
       out.state="confirmed";out.explorerUrl="https://explorer.solana.com/tx/"+signed.signature+"?cluster=devnet";
     }catch{/* A submitted signature or an RPC error never proves success and never permits automatic retry. */}
     return out;
   }
   async recover(input:unknown,wallet:string){check(this.actions,"live_execution_disabled");const v=input as any;check(v&&operations.includes(v.operation)&&v.workflow&&typeof v.workflow==="object","invalid_request");const t=v.workflow.terms??v.workflow;check(typeof t.sponsor==="string"&&typeof t.internshipId==="string"&&typeof t.milestoneId==="string"&&/^(0|[1-9][0-9]{0,19})$/.test(t.internshipId)&&/^(0|[1-9][0-9]{0,19})$/.test(t.milestoneId),"invalid_request");const i=BigInt(t.internshipId),m=BigInt(t.milestoneId);check(i<=0xffffffffffffffffn&&m<=0xffffffffffffffffn,"invalid_request");const sponsor=new PublicKey(t.sponsor);check(sponsor.toBase58()===t.sponsor&&!sponsor.equals(PublicKey.default),"invalid_request");const internship=deriveInternship(sponsor,i)[0].toBase58(),milestone=deriveMilestone(internship,m)[0].toBase58(),operationKey=v.operation+":"+(v.operation==="create_internship"?internship:milestone),record=this.actions.lookup(operationKey,wallet);
     let confirmation:WalletConfirmation|null=null;if(record.sendReserved&&record.signature){try{check(await this.rpc.call("getGenesisHash")===SETTLEMENT_DEVNET_GENESIS,"wrong_cluster");const tx=await this.rpc.call("getTransaction",[record.signature,{encoding:"base64",commitment:"confirmed",maxSupportedTransactionVersion:0}]);check(tx?.transaction?.[1]==="base64","transaction_not_correlated");const signed=this.validateSigned(record.id,wallet,tx.transaction[0]);check(signed.signature===record.signature&&hash(Transaction.from(signed.wire).serializeMessage())===record.messageDigest,"transaction_substitution");confirmation=await this.confirm(record.id,wallet,tx.transaction[0]);this.actions.recordConfirmation(record.id,record.signature,confirmation.state);}catch{}}
-    return {kind:"wallet_execution_recovery" as const,operationKey,signature:record.signature,recordedState:this.actions.lookup(operationKey,wallet).state,confirmation,retryAuthorized:false as const,liveExecution:false as const};}
+    return {kind:"wallet_execution_recovery" as const,operationKey,attemptId:record.id,signature:record.signature,recordedState:confirmation?.state??record.state,confirmation,retryAuthorized:false as const,liveExecution:false as const};}
   async broadcast():Promise<never>{throw new WalletAuthError("live_execution_disabled",403);}
 }

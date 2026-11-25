@@ -110,7 +110,7 @@ async function handleRequest(q,pub,signAuth){
    const context=await runtime.browser.newContext({ignoreHTTPSErrors:false}),page=runtime.page=await context.newPage();
    await context.route("**/*",route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
    page.on("pageerror",e=>runtime.errors.push(e.message));
-   runtime.walletRequests=0;runtime.apiErrors=[];page.on("response",async response=>{if(response.url().startsWith(origin+"/api/")){const body=await response.json().catch(()=>({}));runtime.apiErrors.push({kind:body.data?.kind,path:new URL(response.url()).pathname,status:response.status(),code:body.error?.code});}});
+   const responseRuntime=runtime;runtime.walletRequests=0;runtime.apiErrors=[];page.on("response",async response=>{if(response.url().startsWith(origin+"/api/")){const body=await response.json().catch(()=>({}));responseRuntime.apiErrors.push({kind:body.data?.kind,path:new URL(response.url()).pathname,status:response.status(),code:body.error?.code});}});
    await page.exposeFunction("__offlineAuthSignature",(wallet,bytes)=>{
     const message=Buffer.from(bytes).toString("utf8");assert(message.startsWith(new URL(origin).host+" wants you to sign in with your Solana account:\n"+wallet+"\n"));
     assert(message.includes("Sign in to ProofOfWork for read-only application access. No transaction or payment is authorized."));

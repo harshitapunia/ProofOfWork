@@ -365,3 +365,47 @@ test("Verified scope offers settlement review with the exact scope-only backend 
  let sent=false;await page.route(ORIGIN+"/api/v1/workflow/review",async route=>{const q=route.request().postDataJSON();expect(q.operation).toBe("settle_milestone");expect(q.workflow).toEqual({apiVersion:VERSION,cluster:"devnet",sponsor:"fixture-sponsor",internshipId:"9",milestoneId:"1"});sent=true;await route.fulfill({json:reply({kind:"wallet_execution_review",state:"blocked",liveExecution:false,operation:"settle_milestone",wallet:WALLET,blockers:["missing_program"],deployment:null,messageBase64:null,rewardPayment:"not_established"},"unverified_devnet_rpc")});});
  await scope.getByRole("button",{name:"settle milestone — review",exact:true}).click();await expect(scope.getByRole("heading",{name:"Execution blocked",exact:true})).toBeVisible();expect(sent).toBe(true);await expect(scope.getByRole("button",{name:"Approve transaction in wallet — disabled",exact:true})).toBeDisabled();
 });
+
+test("an old confirmation cannot change the active wallet review",async({page})=>{
+ await organizationForm(page);await page.getByRole("button",{name:"Prepare organization instructions"}).click();
+ await page.evaluate(()=>{(window as any).phantom.solana.request=async()=>({serialize:()=>new Uint8Array([1])});});
+ const provenance="unverified_devnet_rpc",prefix=ORIGIN+"/api/v1/workflow/";
+ await page.route(prefix+"review",route=>route.fulfill({json:reply({kind:"wallet_execution_review",
+  state:"ready_for_review",liveExecution:true,operation:route.request().postDataJSON().operation,wallet:WALLET,
+  reviewId:ID,messageBase58:"fixture",expiresAt:new Date(Date.now()+20000).toISOString(),messageBase64:null,
+  deployment:null,blockers:[],rewardPayment:"not_established"},provenance)}));
+ for(const [path,data] of Object.entries({
+  authorize:{kind:"wallet_execution_authorization",liveExecution:true},
+  revalidate:{kind:"wallet_execution_revalidation",liveExecution:false,state:"ready_for_review"},
+  validate:{kind:"wallet_execution_signature",liveExecution:false,signature:"fixture"},
+  confirm:{kind:"wallet_execution_confirmation",state:"confirmed",signature:"fixture",rewardPayment:"not_established",retryAuthorized:false,explorerUrl:null},
+ }))await page.route(prefix+path,route=>route.fulfill({json:reply(data,provenance)}));
+ let started!:()=>void,release!:()=>void;const sending=new Promise<void>(r=>started=r),held=new Promise<void>(r=>release=r);
+ await page.route(prefix+"broadcast",async route=>{started();await held;await route.fulfill({json:reply({kind:"wallet_execution_submission",state:"submitted",signature:"fixture",retryAuthorized:false},provenance)});});
+ await page.getByRole("button",{name:"create internship — review",exact:true}).click();
+ const approve=page.getByRole("button",{name:"Approve transaction in wallet",exact:true});
+ await approve.click();
+ await page.getByRole("button",{name:"Broadcast signed transaction",exact:true}).click();await sending;
+ await page.getByRole("button",{name:"create milestone — review",exact:true}).click();await expect(approve).toBeEnabled();
+ const confirmed=page.waitForResponse(prefix+"confirm");release();await confirmed;
+ await expect(page.getByText("Wallet execution state: ready for review.",{exact:false})).toBeVisible();
+ await expect(approve).toBeEnabled();
+});
+test("recovery validates nested payout evidence before rendering an exact reward",async({page})=>{
+ await browserFixture(page);await signIn(page);await page.getByRole("link",{name:"Organization workspace",exact:true}).click();
+ const scope=page.getByRole("region",{name:"Observed workflow state",exact:true});
+ await page.route(ORIGIN+"/api/v1/workflow/state",route=>route.fulfill({json:reply(workflowObservation("Settled"),"offline_fixture")}));
+ await scope.getByLabel("Internship ID to inspect",{exact:true}).fill("9");await scope.getByLabel("Milestone ID to inspect",{exact:true}).fill("1");
+ await scope.getByRole("button",{name:"Refresh chain observation",exact:true}).click();
+ const recovery=page.getByRole("region",{name:"Previous transaction confirmation",exact:true});
+ let after="101";
+ await page.route(ORIGIN+"/api/v1/workflow/recover",route=>route.fulfill({json:reply({kind:"wallet_execution_recovery",
+  operationKey:"settle_milestone:fixture",attemptId:ID,signature:"fixture",recordedState:"confirmed",retryAuthorized:false,liveExecution:false,
+  confirmation:{kind:"wallet_execution_confirmation",state:"confirmed",signature:"fixture",rewardPayment:"exact_reward_confirmed",explorerUrl:null,retryAuthorized:false,
+   settlement:{student:"fixture-student",mint:"fixture-mint",sponsorDestination:"fixture-ata",completion:"fixture-completion",vaultClosed:true,
+    rewardAmountRaw:"10",studentBeforeRaw:"100",studentAfterRaw:after,sponsorSurplusRaw:"0",rentReturnedRaw:"0"}}},"unverified_devnet_rpc")}));
+ await recovery.getByRole("button",{name:"Recheck recorded transaction"}).click();
+ await expect(recovery.getByRole("alert")).toBeVisible();await expect(recovery.getByText(/Exact reward 10/)).toHaveCount(0);
+ after="110";await recovery.getByRole("button",{name:"Recheck recorded transaction"}).click();
+ await expect(recovery.getByText(/Exact reward 10/)).toBeVisible();
+});
