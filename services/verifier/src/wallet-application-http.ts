@@ -1,3 +1,4 @@
+import {ControlledAttestation} from "./controlled-attestation.js";
 import type { WorkflowVerification } from "./workflow-verification.js";
 import type { WorkflowStateReader } from "./workflow-state.js";
 import { WalletExecutionReviewer } from "./devnet-wallet-review.js";
@@ -11,8 +12,8 @@ import { WalletSessions, WalletAuthError, sessionCookie, readSessionCookie, chal
 const PREFIX = "/api/v1/";
 export class WalletApplicationHttp {
   #active = 0;
-  readonly #services: Readonly<{ store: LifecycleStore; timeoutMs: number; chain?: ApplicationChainSource; workflowState?: WorkflowStateReader; workflowVerification?: WorkflowVerification; walletReview?: WalletExecutionReviewer }> | undefined;
-  constructor(readonly sessions: WalletSessions, services?: { store: LifecycleStore; timeoutMs: number; chain?: ApplicationChainSource; workflowState?: WorkflowStateReader; workflowVerification?: WorkflowVerification; walletReview?: WalletExecutionReviewer }) {
+  readonly #services: Readonly<{ store: LifecycleStore; timeoutMs: number; chain?: ApplicationChainSource; workflowState?: WorkflowStateReader; workflowVerification?: WorkflowVerification | ControlledAttestation; walletReview?: WalletExecutionReviewer }> | undefined;
+  constructor(readonly sessions: WalletSessions, services?: { store: LifecycleStore; timeoutMs: number; chain?: ApplicationChainSource; workflowState?: WorkflowStateReader; workflowVerification?: WorkflowVerification | ControlledAttestation; walletReview?: WalletExecutionReviewer }) {
     if (!(sessions instanceof WalletSessions)) throw new WalletAuthError("invalid_auth_configuration", 503);
     if (services) {
       // Reuse query configuration validation, but do not install an authentication bypass.
@@ -46,13 +47,14 @@ export class WalletApplicationHttp {
       if (request.method !== "GET" || request.headers.origin) return false;
       this.reply(response, applicationReply(applicationRequestId(), "health", null, 200, Object.freeze({ kind: "health",
         process: "serving", readiness: "limited", authentication: "wallet_signature_single_instance",
-        applicationReads: "authenticated_read_routes", storage: "not_probed", chain: "not_probed", execution: "disabled" }), "process_health", null, "limited"));
+        applicationReads: "authenticated_read_routes", storage: "not_probed", chain: "not_probed", execution: this.#services?.walletReview?.actions ? "action_approval_required" : "disabled" }), "process_health", null, "limited"));
       return true;
     }
     const match = /^\/api\/v1\/jobs\/([^/?]+)(?:\/(milestone|execution))?$/.exec(path);
-    const walletAction = ["review", "revalidate", "validate", "confirm", "broadcast"].find(action => path === PREFIX + "workflow/" + action);
+    const walletAction = ["review", "recover", "revalidate", "authorize", "validate", "confirm", "broadcast"].find(action => path === PREFIX + "workflow/" + action);
     const observation = ["workflow/state", "workflow/verification", "workflow/dispatch"].find(action => path === PREFIX + action);
-    const preparation = path === PREFIX + "workflow/prepare" || walletAction !== undefined || observation !== undefined;
+    const attestationAction=["review","authorize","validate","broadcast","confirm"].find(action=>path===PREFIX+"attestation/"+action);
+    const preparation = attestationAction!==undefined || path === PREFIX + "workflow/prepare" || walletAction !== undefined || observation !== undefined;
     const auth = [PREFIX + "auth/challenge", PREFIX + "auth/verify", PREFIX + "auth/logout"].includes(path);
     if (!auth && !match && !preparation) return false;
     let resource: ApplicationResource | "authentication" | "unknown" = auth ? "authentication" : "unknown", id: string | null = null;
@@ -74,11 +76,18 @@ export class WalletApplicationHttp {
       if (preparation) {
         const session = this.sessions.resolve(token);
         if (!session) throw new WalletAuthError("authentication_required", 401);
-        if (walletAction === "broadcast") throw new WalletAuthError("live_execution_disabled", 403);
+        if (walletAction === "broadcast" && !this.#services?.walletReview?.actions) throw new WalletAuthError("live_execution_disabled", 403);
         const input = await this.body(request);
         // Recheck after potentially slow body delivery; a revoked/expired cookie cannot prepare a plan.
         if (this.sessions.resolve(token)?.sessionId !== session.sessionId) throw new WalletAuthError("authentication_required", 401);
-        if (observation) {
+        if(attestationAction){
+          const service=this.#services?.workflowVerification;if(!(service instanceof ControlledAttestation))throw new WalletAuthError("attestation_unavailable",503);
+          const value=input as any,keys=attestationAction==="validate"?["apiVersion","cluster","jobId","wireBase64"]:["apiVersion","cluster","jobId"];
+          if(!value||typeof value!=="object"||JSON.stringify(Object.keys(value).sort())!==JSON.stringify(keys.sort())||value.apiVersion!==APPLICATION_API_VERSION||value.cluster!=="devnet"||typeof value.jobId!=="string"||!/^[a-f0-9-]{36}$/.test(value.jobId))throw new WalletAuthError("invalid_request",400);
+          const active=()=>{if(this.sessions.resolve(token)?.sessionId!==session.sessionId)throw new WalletAuthError("authentication_required",401);};
+          const data=attestationAction==="review"?await service.review(value.jobId,session.wallet):attestationAction==="authorize"?await service.authorize(value.jobId,session.wallet,active):attestationAction==="validate"?await service.validate(value.jobId,session.wallet,value.wireBase64,active):attestationAction==="broadcast"?await service.broadcast(value.jobId,session.wallet,active):await service.confirm(value.jobId,session.wallet);
+          active();this.reply(response,applicationReply(applicationRequestId(),"unknown",null,200,data,"unverified_devnet_rpc"));
+        } else if (observation) {
           const reader=this.#services?.workflowState;
           if(!reader)throw new WalletAuthError("chain_reader_unavailable",503);
           const assertSession=()=>{if(this.sessions.resolve(token)?.sessionId!==session.sessionId)throw new WalletAuthError("authentication_required",401);};
@@ -94,14 +103,18 @@ export class WalletApplicationHttp {
           const reviewer = this.#services?.walletReview;
           if (!reviewer) throw new WalletAuthError("wallet_review_unavailable", 503);
           const value = input as any;
-          const keys = walletAction === "review" ? ["apiVersion","cluster","operation","workflow"]
-            : ["confirm","validate"].includes(walletAction) ? ["apiVersion","cluster","reviewId","wireBase64"] : ["apiVersion","cluster","reviewId"];
+          const keys = ["review","recover"].includes(walletAction) ? ["apiVersion","cluster","operation","workflow"]
+            : ["confirm","validate","broadcast"].includes(walletAction) ? ["apiVersion","cluster","reviewId","wireBase64"] : ["apiVersion","cluster","reviewId"];
           if (!value || typeof value !== "object" || Array.isArray(value) || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(keys.sort())
             || value.apiVersion !== APPLICATION_API_VERSION || value.cluster !== "devnet") throw new WalletAuthError("invalid_request",400);
-          if (walletAction !== "review" && (typeof value.reviewId !== "string" || !/^[a-f0-9-]{36}$/.test(value.reviewId))) throw new WalletAuthError("invalid_request",400);
-          const data = walletAction === "review" ? await reviewer.review({operation:value.operation,workflow:value.workflow},session.wallet)
+          if (!["review","recover"].includes(walletAction) && (typeof value.reviewId !== "string" || !/^[a-f0-9-]{36}$/.test(value.reviewId))) throw new WalletAuthError("invalid_request",400);
+          const assertActive=()=>{if(this.sessions.resolve(token)?.sessionId!==session.sessionId)throw new WalletAuthError("authentication_required",401);};
+          const data = walletAction === "recover" ? await reviewer.recover({operation:value.operation,workflow:value.workflow},session.wallet)
+            : walletAction === "broadcast" ? await reviewer.submission(value.reviewId,session.wallet,value.wireBase64,assertActive)
+            : walletAction === "authorize" ? await reviewer.authorize(value.reviewId,session.wallet,assertActive)
+            : walletAction === "review" ? await reviewer.review({operation:value.operation,workflow:value.workflow},session.wallet)
             : walletAction === "validate" ? {kind:"wallet_execution_signature" as const,signature:reviewer.validateSigned(value.reviewId,session.wallet,value.wireBase64).signature,liveExecution:false as const}
-            : walletAction === "confirm" ? await reviewer.confirm(value.reviewId,session.wallet,value.wireBase64)
+            : walletAction === "confirm" ? await (async()=>{const c=await reviewer.confirm(value.reviewId,session.wallet,value.wireBase64);if(reviewer.actions)reviewer.actions.recordConfirmation(value.reviewId,c.signature,c.state);return c;})()
             : (await reviewer.revalidate(value.reviewId,session.wallet), {kind:"wallet_execution_revalidation" as const,liveExecution:false as const,state:"ready_for_review" as const});
           if (this.sessions.resolve(token)?.sessionId !== session.sessionId) throw new WalletAuthError("authentication_required",401);
           this.reply(response,applicationReply(applicationRequestId(),"unknown",null,200,data,"unverified_devnet_rpc"));

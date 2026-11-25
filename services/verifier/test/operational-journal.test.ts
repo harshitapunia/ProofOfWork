@@ -215,7 +215,7 @@ test("accessors and injected exception codes cannot disclose data through model 
 test("schema-v5 stores are neither migrated nor used as operational model persistence", () => {
   const dir = mkdtempSync(join(tmpdir(), "pow-journal-v5-")), path = join(dir, "ledger.sqlite"), store = new LifecycleStore(path);
   try { const f = journalFixture(); f.throughWire(); denied(f.summary());
-    const db = new DatabaseSync(path, { readOnly: true }); try { assert.equal(db.prepare("PRAGMA user_version").get()!.user_version, 5);
+    const db = new DatabaseSync(path, { readOnly: true }); try { assert.equal(db.prepare("PRAGMA user_version").get()!.user_version, 6);
       assert.equal(db.prepare("PRAGMA journal_mode").get()!.journal_mode, "delete");
       assert.equal(db.prepare("SELECT COUNT(*) AS n FROM verification_jobs").get()!.n, 0);
       assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE 'operational_%'").get()!.n, 0);

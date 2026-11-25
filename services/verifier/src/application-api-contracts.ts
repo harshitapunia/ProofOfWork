@@ -1,3 +1,4 @@
+import type {AttestationReview} from "./controlled-attestation.js";
 import type { WorkflowVerificationJob } from "./workflow-verification.js";
 import type { WorkflowState, VerificationHandoff } from "./workflow-state.js";
 import type { WalletReview, WalletConfirmation } from "./devnet-wallet-review.js";
@@ -40,7 +41,7 @@ export interface MilestoneStateView {
 export interface HealthView {
   readonly kind: "health"; readonly process: "serving"; readonly readiness: "limited";
   readonly authentication: "application_adapter_not_registered" | "wallet_signature_single_instance"; readonly applicationReads: "http_routes_not_registered" | "authenticated_read_routes";
-  readonly storage: "not_probed"; readonly chain: "not_probed"; readonly execution: "disabled";
+  readonly storage: "not_probed"; readonly chain: "not_probed"; readonly execution: "disabled"|"action_approval_required";
 }
 export interface WalletChallengeView {
   readonly kind: "wallet_challenge"; readonly challengeId: string; readonly wallet: string;
@@ -53,7 +54,7 @@ export interface WalletSessionView {
   readonly cluster: "devnet"; readonly authenticatedAt: string; readonly expiresAt: string;
 }
 export interface WalletLogoutView { readonly kind: "wallet_logout"; readonly revoked: true }
-export type ApplicationView = WorkflowVerificationJob | WorkflowState | VerificationHandoff | {kind:"wallet_execution_signature";signature:string;liveExecution:false} | WalletReview | WalletConfirmation | {kind:"wallet_execution_revalidation";liveExecution:false;state:"ready_for_review"} | WorkflowPreparation | WalletChallengeView | WalletSessionView | WalletLogoutView | VerificationJobView | ExecutionStatusView | MilestoneStateView | HealthView;
+export type ApplicationView = {kind:"wallet_execution_recovery";operationKey:string;signature:string|null;recordedState:string;confirmation:WalletConfirmation|null;retryAuthorized:false;liveExecution:false} | AttestationReview | {kind:"attestation_signature";signatureCount:number} | {kind:"attestation_confirmation";state:"confirmed"|"failed"|"unknown";signature:string;retryAuthorized:false} | {kind:"wallet_execution_authorization";liveExecution:true} | {kind:"wallet_execution_submission";state:"submitted"|"unknown";signature:string;retryAuthorized:false} | WorkflowVerificationJob | WorkflowState | VerificationHandoff | {kind:"wallet_execution_signature";signature:string;liveExecution:false} | WalletReview | WalletConfirmation | {kind:"wallet_execution_revalidation";liveExecution:false;state:"ready_for_review"} | WorkflowPreparation | WalletChallengeView | WalletSessionView | WalletLogoutView | VerificationJobView | ExecutionStatusView | MilestoneStateView | HealthView;
 export interface ApiReply<T extends ApplicationView = ApplicationView> {
   readonly statusCode: number;
   readonly body: Readonly<{ apiVersion: typeof APPLICATION_API_VERSION; requestId: string; cluster: "devnet";

@@ -1,5 +1,10 @@
 # Controlled ProofOfWork live Devnet rehearsal
 
+For the scoped browser signing, submission and independent attestation flow, see
+[Controlled Devnet rehearsal](CONTROLLED_DEVNET_REHEARSAL.md). The disabled-path
+observations below describe the earlier offline integration and the default
+configuration without action approvals.
+
 Status: **NOT LIVE DEMO VERIFIED.** This is an execution runbook, not approval to
 operate. Offline test success is insufficient. No deployment, funding, minting,
 live transaction signing, attestation, settlement or broadcasting is authorized

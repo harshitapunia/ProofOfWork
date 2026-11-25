@@ -14,7 +14,7 @@ test("v1 migration fixture is the actual approved implementation",()=>{
 });
 test("fresh v5 initialization and repeated opening share the original strict database",t=>{
  const x=temp(t),s=x.store(),raw=x.raw();
- assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version,5);
+ assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version,6);
  assert.equal(raw.prepare("PRAGMA journal_mode").get()!.journal_mode,"delete");
  const j=s.jobs.createOrGetJob("request",bindings());s.close();
  assert.deepEqual(x.store().jobs.getJob(j.jobId),j);
@@ -59,6 +59,6 @@ test("partial migration DDL/version writes roll back after process kill",{timeou
   await once(child,"message");const done=once(child,"exit");child.kill("SIGKILL");await done;
   const legacy=new V1Store(x.path);assert.equal(legacy.get(record.id)!.value,0n);legacy.close();
   const current=x.store();assert.equal(current.get(record.id)!.value,0n);
-  assert.equal(x.raw().prepare("PRAGMA user_version").get()!.user_version,5);
+  assert.equal(x.raw().prepare("PRAGMA user_version").get()!.user_version,6);
  }finally{if(child.exitCode===null&&child.signalCode===null)child.kill("SIGKILL");}
 });

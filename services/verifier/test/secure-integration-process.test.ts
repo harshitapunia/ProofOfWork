@@ -27,7 +27,7 @@ for(const window of windows)test("integrated process crash "+window+" retains co
   const rows=store.executionAttempts.list(),jobs=store.jobs.listRecoveryRequired().entries;
   const expectedAttempt=!["before_job","after_job","after_preparation","before_execution"].includes(window);
   assert.equal(rows.length,expectedAttempt?1:0);assert.equal(jobs.length,window==="before_job"?0:1);
-  const db=new DatabaseSync(path);assert.equal(db.prepare("PRAGMA user_version").get()!.user_version,5);
+  const db=new DatabaseSync(path);assert.equal(db.prepare("PRAGMA user_version").get()!.user_version,6);
   assert.equal(db.prepare("PRAGMA journal_mode").get()!.journal_mode,"delete");db.close();
   if(jobs.length)assert.equal(store.jobs.createOrGetJob("retained_after_crash",jobs[0]!.job.bindings).jobId,jobs[0]!.job.jobId);
   for(const a of rows){

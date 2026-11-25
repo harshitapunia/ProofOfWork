@@ -1,3 +1,4 @@
+import {TransactionRecovery} from "./TransactionRecovery";
 import {ExecutionReview} from "./ExecutionReview";
 import {useEffect,useRef,useState,type FormEvent} from "react";
 import {ApiError,ENVELOPE,message,request,base64,type Session} from "./api";
@@ -41,12 +42,13 @@ export function WorkflowStatus({session,role,prepared,workflow,onExpired}:{sessi
  return <section aria-label="Observed workflow state"><h2>Read the actual milestone</h2>
   <p>Explicit IDs only; this does not allocate or reserve IDs. Imported proposals are not assignments. Reads do not create jobs or confirm a transaction.</p>
   <form onSubmit={e=>void inspect(e)}><div className="workflow-grid">{([['sponsor','Recorded sponsor wallet'],['internshipId','Internship ID to inspect'],['milestoneId','Milestone ID to inspect']] as const).map(([key,label])=><label key={key}>{label}<input required autoComplete="off" maxLength={key==='sponsor'?44:20} value={target[key]} onChange={e=>{clear();setEvidence("");setTarget({...target,[key]:e.target.value});}}/></label>)}</div><button disabled={busy}>Refresh chain observation</button></form>
-  {busy&&<p role="status">Checking workflow state. Blockchain signing and sending remain disabled…</p>}{error&&<p role="alert">{error}</p>}
+  {busy&&<p role="status">Checking workflow state. This read does not sign or send…</p>}{error&&<p role="alert">{error}</p>}
   {state&&<div className="notice" role="status"><h3>{state.status??(state.internshipExists?"Internship observed; milestone absent":"Scope absent at observed slot")}</h3>
    <p>Source: {state.provenance.replaceAll("_"," ")}; {state.commitment} RPC context at slot {state.slot}. Deployment and transaction correlation are not established. No operational ingestion performed.</p>
    <dl className="facts">{[["Internship PDA",state.internship],["Milestone PDA",state.milestone],["Recorded student",state.student??"Not assigned"],["Independent verifier",state.verifier??"Not observed"],["Requirements commitment",state.requirementsHash??"Not observed"],["Reward raw DEMO units",state.rewardAmountRaw??"Not observed"],["Escrow raw DEMO units",state.vaultAmountRaw??"Not observed"],["Submission commitment",state.evidenceHash??"Not submitted"],["Attestation time",state.verifiedAt??"Not attested"],["Completion record",state.completion??"Not observed"],["Vault closure",state.vaultClosed===true?"Token vault absent in terminal-state snapshot":state.vaultClosed===false?"Not closed":"Not established"]].map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
    <p>Creation/milestone collisions are observations only; IDs are not reserved. Reward payment remains not established without a correlated settlement transaction and exact balance evidence.</p>
   </div>}
+  {state&&<TransactionRecovery key={JSON.stringify(target)} scope={{...ENVELOPE,...target}} onExpired={onExpired}/>}
   {state?.status==="Verified"&&<ExecutionReview key={state.milestone} workflow={{...ENVELOPE,...target}} operations={["settle_milestone"]} wallet={session.wallet} onExpired={onExpired}/> }
   {role==="student"&&<form onSubmit={e=>void inspect(e,true)}><h3>Prepare the independent verifier handoff</h3><p>Requires your actual Submitted milestone and matching commitments. This validates the existing verifier request format; it does not run GitHub verification or authorize attestation.</p>
    <label>Verification evidence request JSON (private)<textarea required maxLength={20000} value={evidence} spellCheck={false} onChange={e=>{generation.current++;pending.current?.abort();setBusy(false);setError("");setHandoff(null);setJob(null);setEvidence(e.target.value);}}/></label>

@@ -17,7 +17,7 @@ test("genuine v4 schema/storage fixtures retain approved source provenance",()=>
     assert.equal(createHash("sha256").update(text).digest("hex"),hash);
   }
 });
-test("genuine populated v4 migrates to v5 preserving every reservation/job/handoff/intent row and digest",t=>{
+test("genuine populated v4 migrates through v5 to v6 preserving every reservation/job/handoff/intent row and digest",t=>{
   const x=temp(t),old=new V4Store(x.path),b=bindings(),r=old.reserveInternship(b.sponsor,9007199254740993n);
   old.transition(r.id,0,"prepared",{messageDigest:"ab".repeat(32)});
   const c=ready(old);old.offlineHandoffs.begin(c.claim,c.job.revision,"cd".repeat(32));
@@ -29,7 +29,7 @@ test("genuine populated v4 migrates to v5 preserving every reservation/job/hando
   const db=x.raw(),tables=["counters","reservations","history","verification_jobs","verification_job_history",
     "verification_offline_handoffs","transaction_intents","transaction_intent_history"];
   const rows=()=>tables.map(t=>db.prepare("SELECT * FROM "+t+" ORDER BY rowid").all()),before=rows();
-  const s=x.store();assert.deepEqual(rows(),before);assert.equal(db.prepare("PRAGMA user_version").get()!.user_version,5);
+  const s=x.store();assert.deepEqual(rows(),before);assert.equal(db.prepare("PRAGMA user_version").get()!.user_version,6);
   assert.equal(s.reserveInternship(b.sponsor).value,9007199254740994n);
   assert.equal(s.transactionIntents.getIntent(i.intentId)!.state,"reconciliation_required");
   assert.equal(s.executionAttempts.list().length,0);

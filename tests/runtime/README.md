@@ -37,7 +37,7 @@ explicit pin change; never disable the guard.
 
 23 core tests cover settlement, refunds, lifecycle, local signed history and
 failed transfer/closure/completion atomicity. Financial core fixtures use
-placeholder signatures. The 50 bridge tests use real TypeScript-generated
+placeholder signatures. The 51 bridge tests use real TypeScript-generated
 wire bytes and signed settlement/attack transactions; two cases are client
 preflight rejection only. Lifecycle setup uses placeholder signatures.
 Synthetic overflow/shortfall/completion prestates are labelled in source;
@@ -179,3 +179,12 @@ message policy. Its original process-local mock receipt supplies the message for
 the separate fixture verifier/payer signatures executed by LiteSVM. A cloned
 receipt, changed message or replay cannot supply the wire; a passed job itself
 is never operational signing authority.
+
+The additional controlled-rehearsal browser journey uses the production approval
+gate, separate sign-only provider requests, durable one-send records and exact
+confirmation readers through real HTTPS, then executes each captured transaction
+in LiteSVM. Both verifier and separate payer signatures are checked. External
+transport, Phantom providers, GitHub and runner outcomes remain test doubles;
+deployment metadata/mint authority and RPC context/lease are labelled synthetic.
+The existing offline journey is preserved. This is 23 core plus 51 bridge tests,
+74 total, with two bridge cases still preflight-only. No Devnet writes occur.

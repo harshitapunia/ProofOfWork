@@ -21,7 +21,7 @@ export const LIVE_VERIFIER_DISPATCH=false;
 export type ContributorAdmission = (binding: Readonly<Pick<Request,"milestone"|"student"|"repositoryId"|"contributorId"|"commit">>) => Promise<string | null>;
 export interface WorkflowVerificationJob {
  kind:"workflow_verification_job";jobId:string;milestone:string;state:string;verificationOutcome:"none"|"passed"|"rejected";
- mode:"offline-test-only";persisted:true;attestation:"not_authorized";rewardPayment:"not_established";retryAuthorized:false;
+ mode:"offline-test-only"|"controlled-devnet";persisted:true;attestation:"not_authorized";rewardPayment:"not_established";retryAuthorized:false;
 }
 export class WorkflowVerification {
  readonly #tasks=new Map<string,Promise<void>>();

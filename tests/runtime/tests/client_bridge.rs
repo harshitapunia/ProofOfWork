@@ -108,7 +108,9 @@ impl Worker {
             "worker stopped"
         );
         let value: Value = serde_json::from_str(&line).unwrap();
-        if q["op"] == "browser-start" && value["ok"] == true {
+        if (q["op"] == "browser-start" || q["op"] == "browser-controlled-start")
+            && value["ok"] == true
+        {
             self.browser_active = true;
         }
         if q["op"] == "browser-stop" {
@@ -1665,5 +1667,117 @@ fn browser_https_backend_and_signed_sbf_complete_journey() {
     record(
         "browser-https-sbf-journey",
         json!({"result":"passed","offlineOnly":true,"browser":"Chromium with isolated trusted test TLS","realHttps":true,"sigverify":true,"milestone":s.milestone.to_string(),"studentRewardRaw":REWARD,"completion":s.completion.to_string(),"vaultClosed":true,"simulatedBoundaries":["Phantom provider","read-only RPC backed by LiteSVM snapshot","GitHub HTTP and runner outcomes","test-only transaction dispatch to LiteSVM"]}),
+    );
+}
+
+fn controlled_browser_call(
+    w: &mut Worker,
+    f: &Fixture,
+    operation: &str,
+    action: &str,
+    confirmation: Value,
+) -> Value {
+    let mut accounts = serde_json::Map::new();
+    for owner in [PROGRAM_ID, TOKEN, solana_sdk_ids::system_program::ID] {
+        for (key, a) in f.svm.get_program_accounts(&owner) {
+            accounts.insert(key.to_string(),json!({"owner":a.owner.to_string(),"executable":a.executable,"dataHex":hex(&a.data),"lamports":a.lamports}));
+        }
+    }
+    let mut rents = serde_json::Map::new();
+    for size in [49usize, 276, 165, 113, 249] {
+        rents.insert(
+            size.to_string(),
+            json!(f.svm.minimum_balance_for_rent_exemption(size)),
+        );
+    }
+    let clock = f
+        .svm
+        .get_account(&solana_sdk_ids::sysvar::clock::ID)
+        .unwrap();
+    let unix_timestamp = i64::from_le_bytes(clock.data[32..40].try_into().unwrap());
+    let value=w.call(json!({"op":operation,"action":action,"accounts":accounts,"rents":rents,"time":unix_timestamp,"confirmation":confirmation,"blockhash":f.svm.latest_blockhash().to_string()}));
+    assert_eq!(value["ok"], true, "controlled browser: {value}");
+    value
+}
+fn controlled_send(w: &mut Worker, f: &mut Fixture, op: &str, action: &str, confirm_op: &str) {
+    let wire = controlled_browser_call(w, f, op, action, Value::Null);
+    let tx = decode(&wire);
+    let keys = tx.message.account_keys.clone();
+    let balances = |f: &Fixture| {
+        keys.iter()
+            .map(|k| f.svm.get_account(k).map_or(0, |a| a.lamports))
+            .collect::<Vec<_>>()
+    };
+    let tokens = |f: &Fixture| {
+        keys.iter().enumerate().filter_map(|(index,k)|{let a=f.svm.get_account(k)?;if a.owner!=TOKEN||a.data.len()!=165{return None;}Some(json!({"accountIndex":index,"mint":Address::try_from(&a.data[0..32]).unwrap().to_string(),"owner":Address::try_from(&a.data[32..64]).unwrap().to_string(),"uiTokenAmount":{"amount":u64::from_le_bytes(a.data[64..72].try_into().unwrap()).to_string(),"decimals":6}}))}).collect::<Vec<_>>()
+    };
+    let pre = balances(f);
+    let pre_tokens = tokens(f);
+    let metadata = send(f, &wire, &format!("controlled-{action}"));
+    let confirmation = json!({"slot":200,"transaction":[wire["wireHex"],"hex"],"meta":{"err":null,"fee":metadata.fee,"preBalances":pre,"postBalances":balances(f),"preTokenBalances":pre_tokens,"postTokenBalances":tokens(f)}});
+    controlled_browser_call(w, f, confirm_op, action, confirmation);
+}
+#[test]
+fn browser_controlled_phantom_two_signers_and_real_sbf_journey() {
+    let mut w = Worker::new();
+    let mut f = Fixture::new();
+    signed(&mut f);
+    let plan = controlled_browser_call(&mut w, &f, "browser-controlled-start", "", Value::Null);
+    f.set_time(plan["nowUnixSeconds"].as_i64().unwrap());
+    f.internship = plan["organization"]["internship"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let s = f.scope(1);
+    for (action, status) in [
+        ("create_internship", "Internship observed; milestone absent"),
+        ("create_milestone", "Created"),
+        ("fund_milestone", "Funded"),
+        ("assign_student", "Assigned"),
+    ] {
+        controlled_send(
+            &mut w,
+            &mut f,
+            "browser-controlled-wallet",
+            action,
+            "browser-controlled-confirm",
+        );
+        browser_call(&mut w, &f, "browser-observe", status);
+    }
+    browser_call(&mut w, &f, "browser-student", "");
+    controlled_send(
+        &mut w,
+        &mut f,
+        "browser-controlled-wallet",
+        "submit_milestone",
+        "browser-controlled-confirm",
+    );
+    browser_call(&mut w, &f, "browser-observe", "Submitted");
+    browser_call(&mut w, &f, "browser-handoff", "");
+    controlled_send(
+        &mut w,
+        &mut f,
+        "browser-controlled-attest",
+        "attest",
+        "browser-controlled-attest-confirm",
+    );
+    browser_call(&mut w, &f, "browser-observe", "Verified");
+    controlled_send(
+        &mut w,
+        &mut f,
+        "browser-controlled-wallet",
+        "settle_milestone",
+        "browser-controlled-confirm",
+    );
+    assert_eq!(f.token_amount(f.student_ata), REWARD);
+    assert!(f.svm.get_account(&s.vault).is_none());
+    f.program_account(s.completion, 249, COMPLETION_DISC);
+    f.assert_conserved();
+    browser_call(&mut w, &f, "browser-observe", "Settled");
+    browser_call(&mut w, &f, "browser-stop", "");
+    record(
+        "browser-controlled-full-journey",
+        json!({"result":"passed","offlineOnly":true,"actualHttps":true,"productionApprovalGate":true,"separatePhantomProviderDoubles":true,"sigverify":true,"studentRewardRaw":REWARD,"vaultClosed":true,"syntheticObservations":["deployment loader metadata and approved mint authority","confirmed RPC context and blockhash lease"],"actualVmState":["seven internship lifecycle instructions","classic SPL transfers","raw balances","completion record","vault closure"],"externalWrites":false}),
     );
 }

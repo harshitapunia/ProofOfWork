@@ -41,7 +41,7 @@ for (const version of [1, 2, 3] as const) {
     const before = tables.map(name => raw.prepare("SELECT * FROM " + name + " ORDER BY rowid").all());
     assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version, version);
     const current = x.store();
-    assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version, 5);
+    assert.equal(raw.prepare("PRAGMA user_version").get()!.user_version, 6);
     assert.deepEqual(tables.map(name => raw.prepare("SELECT * FROM " + name + " ORDER BY rowid").all()), before);
     assert.equal(current.reserveInternship(b.sponsor).value, 9007199254740994n);
     assert.equal(current.transactionIntents.listOutstandingIntents().entries.length, 0);

@@ -43,7 +43,7 @@ export interface OfflinePolicyMessage {
 }
 const offlineMessages = new WeakMap<object, OfflinePolicyMessage>();
 /** Only a genuine, unmutated consume result works. Clones, database rows and mock receipts never do. */
-export function takeOfflinePolicyMessage(input: unknown): OfflinePolicyMessage {
+export function takePolicyMessage(input: unknown): OfflinePolicyMessage {
   requirePolicy(Buffer.isBuffer(input), "invalid_consumed_policy_message");
   const record = offlineMessages.get(input);
   offlineMessages.delete(input); // Burn before checks/awaits, including mutation and expiry failures.
@@ -51,6 +51,7 @@ export function takeOfflinePolicyMessage(input: unknown): OfflinePolicyMessage {
   record.assertFresh();
   return Object.freeze({ ...record, message: Buffer.from(record.message) });
 }
+export const takeOfflinePolicyMessage=takePolicyMessage;
 /** Compares every public binding and snapshot independent of object-property insertion order. */
 function sameState(a: AttestationState, b: AttestationState): boolean {
   return JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
