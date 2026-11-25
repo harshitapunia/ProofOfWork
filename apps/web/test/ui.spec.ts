@@ -348,6 +348,8 @@ test("admitted verification dispatch exposes only the existing job and clears it
  await browserFixture(page);await signIn(page);const scope=page.getByRole("region",{name:"Observed workflow state",exact:true});
  await page.route(ORIGIN+"/api/v1/workflow/state",route=>route.fulfill({json:reply(workflowObservation("Submitted"),"offline_fixture")}));
  await scope.getByLabel("Recorded sponsor wallet",{exact:true}).fill("fixture-sponsor");await scope.getByLabel("Internship ID to inspect",{exact:true}).fill("9");await scope.getByLabel("Milestone ID to inspect",{exact:true}).fill("1");await scope.getByRole("button",{name:"Refresh chain observation",exact:true}).click();
+ // Editing evidence cancels pending requests. Wait for the actual scope read before editing.
+ await expect(scope.getByRole("heading",{name:"Submitted",exact:true})).toBeVisible();
  await scope.getByLabel("Verification evidence request JSON (private)",{exact:true}).fill("{}");
  await page.route(ORIGIN+"/api/v1/workflow/verification",route=>route.fulfill({json:reply({kind:"verification_handoff",request:{fixture:"private test request"},dispatch:"contributor_admission_required",authorization:"not_granted",persisted:false,rewardPayment:"not_established"},"offline_fixture")}));
  await scope.getByRole("button",{name:"Validate private verifier handoff",exact:true}).click();
